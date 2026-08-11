@@ -1,0 +1,24 @@
+{
+  "name": "@qr-lifecycle/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --env=\"\" --outdir dist",
+    "check": "wrangler types --check && tsc -p tsconfig.json && tsc -p test/tsconfig.json",
+    "dev": "wrangler dev --env=\"\"",
+    "generate-types": "wrangler types",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@qr-lifecycle/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.21.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.121.0"
+  }
+}

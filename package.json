@@ -1,0 +1,23 @@
+{
+  "name": "qr-lifecycle",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter @qr-lifecycle/web build && pnpm --filter @qr-lifecycle/mobile build && pnpm --filter @qr-lifecycle/api build",
+    "check": "pnpm --recursive --if-present run check",
+    "dev:api": "pnpm --filter @qr-lifecycle/api dev",
+    "dev:web": "pnpm --filter @qr-lifecycle/web dev",
+    "dev:mobile": "pnpm --filter @qr-lifecycle/mobile start",
+    "test": "pnpm --recursive --if-present run test"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

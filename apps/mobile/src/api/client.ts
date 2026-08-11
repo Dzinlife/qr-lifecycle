@@ -1,0 +1,159 @@
+import type { Channel, QrCandidate, QrVersion } from "@qr-lifecycle/contracts";
+
+import { normalizeApiOrigin, parsePairPayload, type PairPayload } from "@/lib/pure";
+import type { MobileSession } from "@/session/storage";
+
+interface ApiErrorBody {
+  error?: { code?: string; message?: string };
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+function url(origin: string, path: string): string {
+  return `${normalizeApiOrigin(origin)}/api/v1${path}`;
+}
+
+async function readError(response: Response): Promise<ApiError> {
+  let body: ApiErrorBody | undefined;
+  try {
+    body = (await response.json()) as ApiErrorBody;
+  } catch {
+    // Some proxies replace API errors with an HTML response.
+  }
+  return new ApiError(
+    body?.error?.message ?? `请求失败（${response.status}）`,
+    response.status,
+    body?.error?.code,
+  );
+}
+
+async function request<T>(
+  origin: string,
+  path: string,
+  init: RequestInit,
+  token?: string,
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  headers.set("Accept", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const response = await fetch(url(origin, path), { ...init, headers });
+  if (!response.ok) throw await readError(response);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export async function pairDeployment(origin: string, code: string): Promise<PairPayload> {
+  const raw = await request<unknown>(origin, "/pair", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+  return parsePairPayload(raw);
+}
+
+export async function listChannels(session: MobileSession): Promise<Channel[]> {
+  const raw = await request<Channel[] | { channels: Channel[] }>(
+    session.deployment.apiOrigin,
+    "/channels",
+    { method: "GET" },
+    session.token,
+  );
+  return Array.isArray(raw) ? raw : raw.channels;
+}
+
+export async function getChannel(session: MobileSession, channelId: string): Promise<Channel> {
+  const raw = await request<Channel | { channel: Channel }>(
+    session.deployment.apiOrigin,
+    `/channels/${encodeURIComponent(channelId)}`,
+    { method: "GET" },
+    session.token,
+  );
+  return "channel" in raw ? raw.channel : raw;
+}
+
+function imageFile(candidate: QrCandidate): { uri: string; name: string; type: string } {
+  const path = candidate.imageUri.toLowerCase();
+  const type = path.endsWith(".png")
+    ? "image/png"
+    : path.endsWith(".heic") || path.endsWith(".heif")
+      ? "image/heic"
+      : "image/jpeg";
+  return { uri: candidate.imageUri, name: `group-qr.${type.split("/")[1]}`, type };
+}
+
+export async function uploadQrCandidate(
+  session: MobileSession,
+  channelId: string,
+  candidate: QrCandidate,
+): Promise<QrVersion> {
+  const form = new FormData();
+  form.append("image", imageFile(candidate) as unknown as Blob);
+  form.append("decodedPayload", candidate.payload);
+  if (candidate.assetId) form.append("sourceAssetId", candidate.assetId);
+  if (candidate.creationTime !== null) {
+    form.append("capturedAt", new Date(candidate.creationTime).toISOString());
+  }
+
+  const raw = await request<QrVersion | { qrVersion: QrVersion }>(
+    session.deployment.apiOrigin,
+    `/channels/${encodeURIComponent(channelId)}/qr-versions`,
+    { method: "POST", body: form },
+    session.token,
+  );
+  return "qrVersion" in raw ? raw.qrVersion : raw;
+}
+
+export async function updateChannelExpiry(
+  session: MobileSession,
+  channelId: string,
+  expiresAt: string | null,
+): Promise<void> {
+  await request(
+    session.deployment.apiOrigin,
+    `/channels/${encodeURIComponent(channelId)}`,
+    { method: "PATCH", body: JSON.stringify({ expiresAt }) },
+    session.token,
+  );
+}
+
+export async function registerDevice(
+  session: MobileSession,
+  token: string,
+  environment: "sandbox" | "production",
+): Promise<string | undefined> {
+  const raw = await request<{ id?: string; device?: { id?: string } }>(
+    session.deployment.apiOrigin,
+    "/devices",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        platform: "ios",
+        apnsToken: token,
+        environment,
+        notificationsEnabled: true,
+      }),
+    },
+    session.token,
+  );
+  return raw.device?.id ?? raw.id;
+}
+
+export async function unregisterDevice(session: MobileSession): Promise<void> {
+  if (!session.deviceId) return;
+  await request(
+    session.deployment.apiOrigin,
+    `/devices/${encodeURIComponent(session.deviceId)}`,
+    { method: "DELETE" },
+    session.token,
+  );
+}

@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local APNs testing. Never commit a real private key.
+APNS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"

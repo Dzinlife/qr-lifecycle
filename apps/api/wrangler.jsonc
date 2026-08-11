@@ -1,0 +1,83 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "qr-lifecycle-api",
+  "main": "src/index.ts",
+  // Latest date supported by the current workerd build; update with Wrangler.
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health", "/q/*"]
+  },
+  "vars": {
+    "DEPLOYMENT_MODE": "self_hosted",
+    "PRODUCT_NAME": "QR Lifecycle",
+    "REGISTRATION_ENABLED": false,
+    "CORS_ORIGINS": "*",
+    "APNS_ENVIRONMENT": "production",
+    "APNS_KEY_ID": "",
+    "APNS_TEAM_ID": "",
+    "APNS_TOPIC": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "qr-lifecycle",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "QR_BUCKET",
+      "bucket_name": "qr-lifecycle-images"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "env": {
+    "staging": {
+      "name": "qr-lifecycle-staging",
+      "vars": {
+        "DEPLOYMENT_MODE": "self_hosted",
+        "PRODUCT_NAME": "QR Lifecycle",
+        "REGISTRATION_ENABLED": false,
+        "CORS_ORIGINS": "*",
+        "APNS_ENVIRONMENT": "production",
+        "APNS_KEY_ID": "",
+        "APNS_TEAM_ID": "",
+        "APNS_TOPIC": ""
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "qr-lifecycle-staging",
+          "database_id": "647b29af-79fa-4037-b403-58722a9c6158",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "QR_BUCKET",
+          "bucket_name": "qr-lifecycle-images-staging"
+        }
+      ],
+      "triggers": {
+        "crons": ["*/15 * * * *"]
+      }
+    }
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  }
+}

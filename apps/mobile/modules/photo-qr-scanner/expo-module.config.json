@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "apple": {
+    "modules": ["PhotoQrScannerModule"]
+  },
+  "android": {
+    "modules": ["com.dzinlife.qrlifecycle.photoqrscanner.PhotoQrScannerModule"]
+  }
+}

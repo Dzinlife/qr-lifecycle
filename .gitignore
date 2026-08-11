@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+.DS_Store
+*.log
+apps/mobile/.expo/
+apps/mobile/ios/
+apps/mobile/android/

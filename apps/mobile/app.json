@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "群码续期",
+    "slug": "qr-lifecycle",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "qrlifecycle",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dzinlife.qrlifecycle",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "用于识别你保存到相册中的最新群二维码。二维码识别完全在设备上完成。"
+      }
+    },
+    "android": {
+      "package": "com.dzinlife.qrlifecycle"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "用于选择并上传新的群二维码图片。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}
