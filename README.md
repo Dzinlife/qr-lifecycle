@@ -13,21 +13,24 @@ The paid plan sells hosting and maintenance, not locked product features.
 ## Repository
 
 - `apps/api`: Cloudflare Worker API, scheduled reminders, D1 and R2.
-- `apps/web`: tenant-aware management UI and public live-code page.
-- `apps/mobile`: Expo/React Native app with native photo-library QR scanning.
+- `apps/web`: tenant-aware status, correction, pairing, and operations UI.
+- `apps/mobile`: automation-first Expo/React Native app with native photo-library
+  QR and OCR scanning.
 - `packages/contracts`: shared schemas and API types.
 - `docs`: architecture and protocol decisions.
 
 ## Status
 
-The MVP vertical slice is implemented:
+The mobile-first V2 vertical slice is implemented:
 
 - Cloudflare Worker API with tenant-isolated D1 state, R2 images, Cron reminders,
   and direct APNs provider requests.
-- Responsive React management UI, self-host bootstrap/recovery, channel CRUD,
-  QR history, pairing, and stable public QR pages.
-- Expo SDK 57 mobile app with a native iOS PhotoKit + Vision scanner, APNs device
-  registration, deep links, and confirmed QR activation.
+- Responsive React status UI, self-host bootstrap/recovery, auxiliary channel
+  correction, QR history, pairing, and stable public QR pages. The web app does
+  not scan or upload group-code images.
+- Expo SDK 57 mobile app with local iOS PhotoKit + Vision QR/OCR discovery,
+  confidence-based channel creation and matching, an exception inbox, APNs
+  registration, deep links, and reversible automatic activation.
 - Android-compatible application boundaries; the MediaStore + ML Kit scanner is
   explicitly deferred rather than silently falling back.
 
@@ -56,7 +59,7 @@ pnpm dev:web
 pnpm dev:mobile
 ```
 
-Expo Go is not supported because QR discovery uses a local native module. See
+Expo Go is not supported because QR/OCR discovery uses a local native module. See
 `apps/mobile/README.md` for development-build instructions.
 
 ## Self-hosting on Cloudflare

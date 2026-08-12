@@ -82,6 +82,14 @@ export interface QrCandidate {
   creationTime: number | null;
   payload: string;
   imageUri: string;
+  ocrLines?: OcrLine[];
+  platform?: ChannelPlatform | null;
+  name?: string | null;
+  expiresAt?: string | null;
+  expirySource?: ExpirySource;
+  fieldConfidences?: FieldConfidences;
+  suggestedChannelId?: string | null;
+  matchConfidence?: number;
 }
 
 export interface ScanResult {
@@ -89,3 +97,147 @@ export interface ScanResult {
   cursor: ScanCursor;
   hasIncrementalChanges: boolean;
 }
+
+export const confidenceScoreSchema = z.number().min(0).max(1);
+
+export const ocrLineSchema = z.object({
+  text: z.string().trim().min(1).max(500),
+  confidence: confidenceScoreSchema,
+});
+
+export const expirySourceSchema = z.enum([
+  "explicit",
+  "relative",
+  "platform_default",
+  "unknown",
+]);
+
+export const fieldConfidencesSchema = z.object({
+  platform: confidenceScoreSchema,
+  name: confidenceScoreSchema,
+  expiresAt: confidenceScoreSchema,
+});
+
+/**
+ * Structured, on-device recognition output. `imageUri` is deliberately absent:
+ * it is a device-local handle and must never be serialized as detection metadata.
+ */
+export const detectedCommunityQrSchema = z.object({
+  clientDetectionId: z.string().uuid(),
+  assetId: z.string().min(1).max(512),
+  capturedAt: z.string().datetime().nullable(),
+  creationTime: z.number().int().nonnegative().nullable(),
+  decodedPayload: z.string().min(1).max(8_192),
+  ocrLines: z.array(ocrLineSchema).max(200),
+  platform: channelPlatformSchema.nullable(),
+  name: z.string().trim().min(1).max(120).nullable(),
+  expiresAt: z.string().datetime().nullable(),
+  expirySource: expirySourceSchema,
+  fieldConfidences: fieldConfidencesSchema,
+  suggestedChannelId: z.string().uuid().nullable(),
+  matchConfidence: confidenceScoreSchema,
+});
+
+export const detectionStatusSchema = z.enum([
+  "needs_review",
+  "committed",
+  "ignored",
+  "undone",
+]);
+
+export const detectionActionSchema = z.enum([
+  "auto_create",
+  "auto_update",
+  "duplicate",
+  "needs_review",
+  "accepted_create",
+  "accepted_update",
+  "ignore",
+  "undo",
+]);
+
+export const detectionSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  clientDetectionId: z.string().uuid(),
+  assetId: z.string(),
+  capturedAt: z.string().datetime().nullable(),
+  creationTime: z.number().int().nonnegative().nullable(),
+  ocrLines: z.array(ocrLineSchema),
+  platform: channelPlatformSchema.nullable(),
+  name: z.string().nullable(),
+  expiresAt: z.string().datetime().nullable(),
+  expirySource: expirySourceSchema,
+  fieldConfidences: fieldConfidencesSchema,
+  suggestedChannelId: z.string().uuid().nullable(),
+  matchConfidence: confidenceScoreSchema,
+  status: detectionStatusSchema,
+  action: detectionActionSchema,
+  reason: z.string(),
+  channelId: z.string().uuid().nullable(),
+  qrVersionId: z.string().uuid().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  decidedAt: z.string().datetime().nullable(),
+  undoneAt: z.string().datetime().nullable(),
+});
+
+export const detectionDecisionSchema = z.object({
+  action: detectionActionSchema,
+  automatic: z.boolean(),
+  confidence: confidenceScoreSchema,
+  reason: z.string(),
+  channelId: z.string().uuid().nullable(),
+  qrVersionId: z.string().uuid().nullable(),
+});
+
+export const inboxItemSchema = z.object({
+  detection: detectionSchema,
+  suggestedChannel: channelSchema.nullable(),
+});
+
+export const acceptInboxItemSchema = z
+  .object({
+    channelId: z.string().uuid().optional(),
+    createNew: z.boolean().optional(),
+    name: z.string().trim().min(1).max(120).optional(),
+    platform: channelPlatformSchema.optional(),
+    expiresAt: z.string().datetime().nullable().optional(),
+  })
+  .refine((value) => !(value.createNew && value.channelId), {
+    message: "createNew and channelId cannot be used together",
+  })
+  .default({});
+
+export const commitDetectionResponseSchema = z.object({
+  detection: detectionSchema,
+  decision: detectionDecisionSchema,
+  channel: channelSchema.nullable(),
+  qrVersion: qrVersionSchema.nullable(),
+});
+
+export const inboxResponseSchema = z.object({ items: z.array(inboxItemSchema) });
+export const ignoreDetectionResponseSchema = z.object({ detection: detectionSchema });
+export const undoDetectionResponseSchema = z.object({
+  detection: detectionSchema,
+  channel: channelSchema.nullable(),
+});
+
+export type OcrLine = z.infer<typeof ocrLineSchema>;
+export type ExpirySource = z.infer<typeof expirySourceSchema>;
+export type FieldConfidences = z.infer<typeof fieldConfidencesSchema>;
+export type DetectedCommunityQr = z.infer<typeof detectedCommunityQrSchema>;
+export type DetectionStatus = z.infer<typeof detectionStatusSchema>;
+export type DetectionAction = z.infer<typeof detectionActionSchema>;
+export type Detection = z.infer<typeof detectionSchema>;
+export type DetectionDecision = z.infer<typeof detectionDecisionSchema>;
+export type InboxItem = z.infer<typeof inboxItemSchema>;
+export type AcceptInboxItemInput = z.infer<typeof acceptInboxItemSchema>;
+export type CommitDetectionResponse = z.infer<
+  typeof commitDetectionResponseSchema
+>;
+export type InboxResponse = z.infer<typeof inboxResponseSchema>;
+export type IgnoreDetectionResponse = z.infer<
+  typeof ignoreDetectionResponseSchema
+>;
+export type UndoDetectionResponse = z.infer<typeof undoDetectionResponseSchema>;

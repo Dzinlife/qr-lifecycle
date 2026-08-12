@@ -14,11 +14,49 @@ async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
   return exports.default.fetch(`https://api.example.test${path}`, init);
 }
 
+function detectionForm(
+  overrides: Record<string, unknown> = {},
+  imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+): FormData {
+  const form = new FormData();
+  form.set(
+    "metadata",
+    JSON.stringify({
+      clientDetectionId: crypto.randomUUID(),
+      assetId: `asset-${crypto.randomUUID()}`,
+      capturedAt: "2026-08-12T01:00:00.000Z",
+      creationTime: 1_786_496_400_000,
+      decodedPayload: `https://example.test/invite/${crypto.randomUUID()}`,
+      ocrLines: [{ text: "创作者交流群", confidence: 0.99 }],
+      platform: "wechat_group",
+      name: "创作者交流群",
+      expiresAt: "2026-08-19T01:00:00.000Z",
+      expirySource: "relative",
+      fieldConfidences: { platform: 0.98, name: 0.99, expiresAt: 0.91 },
+      suggestedChannelId: null,
+      matchConfidence: 0,
+      ...overrides,
+    }),
+  );
+  form.set("image", new File([imageBytes], "qr.png", { type: "image/png" }));
+  return form;
+}
+
+async function commitDetectionFor(token: string, form: FormData): Promise<Response> {
+  return fetchApi("/api/v1/detections/commit", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+  });
+}
+
 describe.sequential("QR Lifecycle Worker", () => {
   let token = "";
   let channelId = "";
   let tenantId = "";
   let recoveryCode = "";
+  let otherToken = "";
+  let autoCreatedDetectionId = "";
 
   it("bootstraps a self-hosted deployment exactly once", async () => {
     const initialHealth = await fetchApi("/health");
@@ -109,7 +147,7 @@ describe.sequential("QR Lifecycle Worker", () => {
 
     const otherTenantId = crypto.randomUUID();
     const otherUserId = crypto.randomUUID();
-    const otherToken = "z".repeat(48);
+    otherToken = "z".repeat(48);
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(
@@ -243,6 +281,275 @@ describe.sequential("QR Lifecycle Worker", () => {
       new Date("2026-08-12T00:00:00.000Z"),
     );
     expect(reminderResult).toMatchObject({ scanned: 1, sent: 1, failed: 0 });
+  });
+
+  it("auto-creates a high-confidence detection idempotently and disables it on undo", async () => {
+    const clientDetectionId = crypto.randomUUID();
+    const first = await commitDetectionFor(
+      token,
+      detectionForm({ clientDetectionId, name: "微信产品交流群" }),
+    );
+    expect(first.status).toBe(200);
+    const body = await first.json<{
+      detection: { id: string; action: string; status: string };
+      decision: { action: string; automatic: boolean };
+      channel: { id: string; slug: string; disabledAt: string | null };
+      qrVersion: { id: string };
+    }>();
+    expect(body.decision).toMatchObject({ action: "auto_create", automatic: true });
+    expect(body.channel.slug).toMatch(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u);
+    expect(body.channel.disabledAt).toBeNull();
+    autoCreatedDetectionId = body.detection.id;
+
+    const objectCountBeforeRetry = (
+      await env.QR_BUCKET.list({ prefix: `tenants/${tenantId}/` })
+    ).objects.length;
+
+    const crossTenantUndo = await fetchApi(
+      `/api/v1/detections/${body.detection.id}/undo`,
+      { method: "POST", headers: { authorization: `Bearer ${otherToken}` } },
+    );
+    expect(crossTenantUndo.status).toBe(404);
+
+    const repeated = await commitDetectionFor(
+      token,
+      detectionForm({
+        clientDetectionId,
+        assetId: "changed-on-retry",
+        decodedPayload: "https://example.test/invite/changed-on-retry",
+      }),
+    );
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({
+      detection: { id: body.detection.id, action: "auto_create" },
+      channel: { id: body.channel.id },
+      qrVersion: { id: body.qrVersion.id },
+    });
+    expect(
+      (await env.QR_BUCKET.list({ prefix: `tenants/${tenantId}/` })).objects,
+    ).toHaveLength(objectCountBeforeRetry);
+
+    const undone = await fetchApi(`/api/v1/detections/${body.detection.id}/undo`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(undone.status).toBe(200);
+    expect(await undone.json()).toMatchObject({
+      detection: { status: "undone", action: "undo" },
+      channel: { id: body.channel.id },
+    });
+    const disabled = await env.DB.prepare(
+      "SELECT disabled_at FROM channels WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(body.channel.id, tenantId)
+      .first<{ disabled_at: string | null }>();
+    expect(disabled?.disabled_at).not.toBeNull();
+  });
+
+  it("auto-updates a tenant-local suggested channel and restores it on undo", async () => {
+    const before = await env.DB.prepare(
+      "SELECT active_qr_version_id, expires_at FROM channels WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(channelId, tenantId)
+      .first<{ active_qr_version_id: string | null; expires_at: string | null }>();
+    const response = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: "小红书交流群",
+        platform: "xiaohongshu_group",
+        suggestedChannelId: channelId,
+        matchConfidence: 0.97,
+        decodedPayload: "https://example.test/invite/new-xhs-code",
+        expiresAt: "2026-08-22T00:00:00.000Z",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json<{
+      detection: { id: string };
+      decision: { action: string };
+      channel: { id: string; expiresAt: string; activeQrVersionId: string };
+    }>();
+    expect(body.decision.action).toBe("auto_update");
+    expect(body.channel).toMatchObject({
+      id: channelId,
+      expiresAt: "2026-08-22T00:00:00.000Z",
+    });
+    expect(body.channel.activeQrVersionId).not.toBe(before?.active_qr_version_id);
+
+    const undone = await fetchApi(`/api/v1/detections/${body.detection.id}/undo`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(undone.status).toBe(200);
+    expect(await undone.json()).toMatchObject({
+      detection: { status: "undone" },
+      channel: {
+        id: channelId,
+        activeQrVersionId: before?.active_qr_version_id,
+        expiresAt: before?.expires_at,
+      },
+    });
+  });
+
+  it("keeps low-confidence detections in the inbox and isolates review actions by tenant", async () => {
+    const response = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: "不确定的群",
+        fieldConfidences: { platform: 0.7, name: 0.72, expiresAt: 0.4 },
+        suggestedChannelId: channelId,
+        matchConfidence: 0.7,
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json<{
+      detection: { id: string; suggestedChannelId: string | null };
+      decision: { action: string };
+    }>();
+    expect(body.decision.action).toBe("needs_review");
+    expect(body.detection.suggestedChannelId).toBe(channelId);
+
+    const inbox = await fetchApi("/api/v1/inbox", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(await inbox.json()).toMatchObject({
+      items: [
+        {
+          detection: { id: body.detection.id },
+          suggestedChannel: { id: channelId },
+        },
+      ],
+    });
+    const otherInbox = await fetchApi("/api/v1/inbox", {
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(await otherInbox.json()).toEqual({ items: [] });
+    const crossTenantIgnore = await fetchApi(
+      `/api/v1/inbox/${body.detection.id}/ignore`,
+      { method: "POST", headers: { authorization: `Bearer ${otherToken}` } },
+    );
+    expect(crossTenantIgnore.status).toBe(404);
+    const crossTenantAccept = await fetchApi(
+      `/api/v1/inbox/${body.detection.id}/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${otherToken}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    expect(crossTenantAccept.status).toBe(404);
+
+    const ignored = await fetchApi(`/api/v1/inbox/${body.detection.id}/ignore`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(ignored.status).toBe(200);
+    expect(await ignored.json()).toMatchObject({
+      detection: { id: body.detection.id, status: "ignored", action: "ignore" },
+    });
+  });
+
+  it("accepts a low-confidence detection into a new channel", async () => {
+    const response = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: null,
+        platform: null,
+        expiresAt: null,
+        expirySource: "unknown",
+        fieldConfidences: { platform: 0, name: 0, expiresAt: 0 },
+      }),
+    );
+    const detection = await response.json<{ detection: { id: string } }>();
+    const accepted = await fetchApi(`/api/v1/inbox/${detection.detection.id}/accept`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "手动确认群", platform: "other" }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      detection: { status: "committed", action: "accepted_create" },
+      decision: { action: "accepted_create", automatic: false },
+      channel: { name: "手动确认群", platform: "other" },
+    });
+  });
+
+  it("does not trust a forged high-confidence suggested channel", async () => {
+    const response = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: "完全不同的群",
+        platform: "xiaohongshu_group",
+        suggestedChannelId: channelId,
+        matchConfidence: 0.99,
+        fieldConfidences: { platform: 0.99, name: 0.99, expiresAt: 0.99 },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      detection: { suggestedChannelId: channelId, status: "needs_review" },
+      decision: { action: "needs_review", automatic: false, confidence: 0 },
+    });
+    expect(autoCreatedDetectionId).not.toBe("");
+  });
+
+  it("marks a second detection of the same QR as duplicate without replacing the active version", async () => {
+    const payload = "https://example.test/invite/repeatable";
+    const first = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: "小红书交流群",
+        platform: "xiaohongshu_group",
+        suggestedChannelId: channelId,
+        matchConfidence: 0.98,
+        decodedPayload: payload,
+      }),
+    );
+    const firstBody = await first.json<{
+      channel: { activeQrVersionId: string };
+      qrVersion: { id: string };
+    }>();
+    const second = await commitDetectionFor(
+      token,
+      detectionForm({
+        name: "小红书交流群",
+        platform: "xiaohongshu_group",
+        suggestedChannelId: channelId,
+        matchConfidence: 0.98,
+        decodedPayload: payload,
+        assetId: "another-photo-of-the-same-code",
+      }),
+    );
+    expect(second.status).toBe(200);
+    const secondBody = await second.json<{
+      detection: { id: string };
+      decision: { action: string; automatic: boolean };
+      channel: { activeQrVersionId: string };
+      qrVersion: { id: string };
+    }>();
+    expect(secondBody).toMatchObject({
+      decision: { action: "duplicate", automatic: true },
+      channel: { activeQrVersionId: firstBody.channel.activeQrVersionId },
+      qrVersion: { id: firstBody.qrVersion.id },
+    });
+    expect(
+      await env.QR_BUCKET.head(
+        `tenants/${tenantId}/detections/${secondBody.detection.id}`,
+      ),
+    ).toBeNull();
+    const count = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM qr_versions
+       WHERE tenant_id = ? AND channel_id = ? AND decoded_payload_hash = ?`,
+    )
+      .bind(tenantId, channelId, await sha256(`${tenantId}${payload}`))
+      .first<{ count: number }>();
+    expect(count?.count).toBe(1);
   });
 });
 

@@ -28,6 +28,10 @@ public final class PhotoQrScannerModule: Module {
         seenAssetIds: seenAssetIds
       )
     }
+
+    AsyncFunction("analyzeImage") { (imageUri: String) async throws -> [String: Any] in
+      try PhotoQrScanWorker().analyzeImage(imageUri: imageUri)
+    }
   }
 
   private static func permissionPayload(_ status: PHAuthorizationStatus) -> [String: Any] {
@@ -49,6 +53,7 @@ public final class PhotoQrScannerModule: Module {
 private enum PhotoQrScannerError: LocalizedError {
   case permissionDenied
   case assetUnavailable
+  case invalidImageUri
 
   var errorDescription: String? {
     switch self {
@@ -56,6 +61,8 @@ private enum PhotoQrScannerError: LocalizedError {
       return "ERR_PHOTO_PERMISSION_DENIED: Photo library permission is required"
     case .assetUnavailable:
       return "ERR_ASSET_UNAVAILABLE: Photo data could not be loaded"
+    case .invalidImageUri:
+      return "ERR_INVALID_IMAGE_URI: A readable local image URI is required"
     }
   }
 }
@@ -63,6 +70,17 @@ private enum PhotoQrScannerError: LocalizedError {
 private struct AssetData {
   let data: Data
   let typeIdentifier: String?
+}
+
+private struct RecognizedTextLine {
+  let text: String
+  let confidence: Float
+  let boundingBox: CGRect
+}
+
+private struct VisionScanResult {
+  let qrPayloads: [String]
+  let textLines: [RecognizedTextLine]
 }
 
 private final class PhotoQrScanWorker {
@@ -95,17 +113,19 @@ private final class PhotoQrScanWorker {
       }
 
       guard let assetData = try? await loadData(for: asset) else { continue }
-      let payloads = try detectQrPayloads(in: assetData.data)
-      guard !payloads.isEmpty else { continue }
+      let visionResult = try recognizeContent(in: assetData.data)
+      guard !visionResult.qrPayloads.isEmpty else { continue }
       let imageUri = try exportToCache(assetData)
 
-      for payload in payloads {
-        candidates.append([
+      for payload in visionResult.qrPayloads {
+        let candidate: [String: Any] = [
           "assetId": asset.localIdentifier,
           "creationTime": creationTime ?? NSNull(),
           "payload": payload,
           "imageUri": imageUri.absoluteString,
-        ])
+          "ocrLines": visionResult.textLines.map(Self.textLinePayload),
+        ]
+        candidates.append(candidate)
       }
     }
 
@@ -116,6 +136,25 @@ private final class PhotoQrScanWorker {
       "candidates": candidates,
       "cursor": cursor,
       "hasIncrementalChanges": lastCreationTime != nil,
+    ]
+  }
+
+  func analyzeImage(imageUri: String) throws -> [String: Any] {
+    guard let url = URL(string: imageUri), url.isFileURL,
+          let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+      throw PhotoQrScannerError.invalidImageUri
+    }
+    let result = try recognizeContent(in: data)
+    return [
+      "payloads": result.qrPayloads,
+      "ocrLines": result.textLines.map(Self.textLinePayload),
+    ]
+  }
+
+  private static func textLinePayload(_ line: RecognizedTextLine) -> [String: Any] {
+    [
+      "text": line.text,
+      "confidence": Double(line.confidence),
     ]
   }
 
@@ -157,12 +196,43 @@ private final class PhotoQrScanWorker {
     }
   }
 
-  private func detectQrPayloads(in data: Data) throws -> [String] {
-    let request = VNDetectBarcodesRequest()
-    request.symbologies = [.qr]
-    try VNImageRequestHandler(data: data, options: [:]).perform([request])
-    let values = request.results?.compactMap(\.payloadStringValue) ?? []
-    return Array(Set(values)).sorted()
+  private func recognizeContent(in data: Data) throws -> VisionScanResult {
+    let barcodeRequest = VNDetectBarcodesRequest()
+    barcodeRequest.symbologies = [.qr]
+
+    let textRequest = VNRecognizeTextRequest()
+    textRequest.recognitionLevel = .accurate
+    textRequest.usesLanguageCorrection = true
+    textRequest.recognitionLanguages = ["zh-Hans", "en-US"]
+
+    let handler = VNImageRequestHandler(data: data, options: [:])
+    try handler.perform([barcodeRequest, textRequest])
+
+    let payloads = barcodeRequest.results?.compactMap(\.payloadStringValue) ?? []
+    let textLines = (textRequest.results ?? [])
+      .compactMap { observation -> RecognizedTextLine? in
+        guard let candidate = observation.topCandidates(1).first else { return nil }
+        let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return RecognizedTextLine(
+          text: String(text.prefix(500)),
+          confidence: candidate.confidence,
+          boundingBox: observation.boundingBox
+        )
+      }
+      .prefix(200)
+      .sorted { lhs, rhs in
+        let verticalDistance = abs(lhs.boundingBox.maxY - rhs.boundingBox.maxY)
+        if verticalDistance > 0.02 {
+          return lhs.boundingBox.maxY > rhs.boundingBox.maxY
+        }
+        return lhs.boundingBox.minX < rhs.boundingBox.minX
+      }
+
+    return VisionScanResult(
+      qrPayloads: Array(Set(payloads)).sorted(),
+      textLines: Array(textLines)
+    )
   }
 
   private func exportToCache(_ assetData: AssetData) throws -> URL {

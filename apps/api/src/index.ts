@@ -23,6 +23,13 @@ import {
   withCors,
 } from "./http";
 import {
+  acceptInboxItem,
+  commitDetection,
+  ignoreInboxItem,
+  listInbox,
+  undoDetection,
+} from "./detections";
+import {
   channelFromRow,
   deviceFromRow,
   qrVersionFromRow,
@@ -596,7 +603,7 @@ async function uploadQrVersion(
   }
   const capturedAt = optionalCapturedAt(formString(form, "capturedAt", false));
   const decodedPayloadHash = await sha256(
-    `${auth.tenantId}${channelId}${decodedPayload}`,
+    `${auth.tenantId}${decodedPayload}`,
   );
 
   const existing = await env.DB.prepare(
@@ -947,6 +954,30 @@ async function routeApi(
   }
   if (method === "POST" && pathname === `${API_PREFIX}/devices`) {
     return upsertDevice(request, env);
+  }
+  if (method === "POST" && pathname === `${API_PREFIX}/detections/commit`) {
+    return commitDetection(request, env);
+  }
+  if (method === "GET" && pathname === `${API_PREFIX}/inbox`) {
+    return listInbox(request, env);
+  }
+
+  const inboxActionMatch = new RegExp(
+    `^${API_PREFIX}/inbox/([^/]+)/(accept|ignore)$`,
+    "u",
+  ).exec(pathname);
+  if (inboxActionMatch?.[1] && inboxActionMatch[2] && method === "POST") {
+    const detectionId = decodeURIComponent(inboxActionMatch[1]);
+    return inboxActionMatch[2] === "accept"
+      ? acceptInboxItem(request, env, detectionId)
+      : ignoreInboxItem(request, env, detectionId);
+  }
+  const detectionUndoMatch = new RegExp(
+    `^${API_PREFIX}/detections/([^/]+)/undo$`,
+    "u",
+  ).exec(pathname);
+  if (detectionUndoMatch?.[1] && method === "POST") {
+    return undoDetection(request, env, decodeURIComponent(detectionUndoMatch[1]));
   }
 
   const qrVersionsMatch = new RegExp(

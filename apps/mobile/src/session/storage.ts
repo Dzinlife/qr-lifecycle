@@ -2,9 +2,8 @@ import * as SecureStore from "expo-secure-store";
 
 import type { DeploymentInfo, ScanCursor } from "@qr-lifecycle/contracts";
 
-import { channelCursorKey } from "@/lib/pure";
-
 const SESSION_KEY = "qr-lifecycle.mobile-session.v1";
+const SCAN_CURSOR_KEY = "qr-lifecycle.photo-cursor.global.v2";
 
 export interface MobileSession {
   token: string;
@@ -34,17 +33,28 @@ export async function loadSession(): Promise<MobileSession | null> {
 }
 
 export async function saveSession(session: MobileSession): Promise<void> {
+  const previous = await loadSession();
+  if (previous && previous.deployment.apiOrigin !== session.deployment.apiOrigin) {
+    await clearScanCursor();
+  }
   await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session), {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
 }
 
 export async function clearSession(): Promise<void> {
-  await SecureStore.deleteItemAsync(SESSION_KEY);
+  await Promise.all([
+    SecureStore.deleteItemAsync(SESSION_KEY),
+    clearScanCursor(),
+  ]);
 }
 
-export async function loadScanCursor(channelId: string): Promise<ScanCursor | undefined> {
-  const value = await SecureStore.getItemAsync(channelCursorKey(channelId));
+/**
+ * The ignored channel ID keeps older screens source-compatible while all scans now
+ * share one photo-library cursor. A photo asset must never be re-scanned per channel.
+ */
+export async function loadScanCursor(_legacyChannelId?: string): Promise<ScanCursor | undefined> {
+  const value = await SecureStore.getItemAsync(SCAN_CURSOR_KEY);
   if (!value) return undefined;
   try {
     const parsed = JSON.parse(value) as ScanCursor;
@@ -55,18 +65,27 @@ export async function loadScanCursor(channelId: string): Promise<ScanCursor | un
   }
 }
 
-export async function saveScanCursor(channelId: string, cursor: ScanCursor): Promise<void> {
+export async function saveScanCursor(cursor: ScanCursor): Promise<void>;
+export async function saveScanCursor(legacyChannelId: string, cursor: ScanCursor): Promise<void>;
+export async function saveScanCursor(
+  cursorOrLegacyChannelId: ScanCursor | string,
+  legacyCursor?: ScanCursor,
+): Promise<void> {
+  const cursor = typeof cursorOrLegacyChannelId === "string"
+    ? legacyCursor
+    : cursorOrLegacyChannelId;
+  if (!cursor) throw new Error("Scan cursor is required");
   const compact: ScanCursor = {
     seenAssetIds: cursor.seenAssetIds.slice(-50),
     ...(cursor.lastCreationTime === undefined
       ? {}
       : { lastCreationTime: cursor.lastCreationTime }),
   };
-  await SecureStore.setItemAsync(channelCursorKey(channelId), JSON.stringify(compact), {
+  await SecureStore.setItemAsync(SCAN_CURSOR_KEY, JSON.stringify(compact), {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
 }
 
-export async function clearScanCursor(channelId: string): Promise<void> {
-  await SecureStore.deleteItemAsync(channelCursorKey(channelId));
+export async function clearScanCursor(_legacyChannelId?: string): Promise<void> {
+  await SecureStore.deleteItemAsync(SCAN_CURSOR_KEY);
 }

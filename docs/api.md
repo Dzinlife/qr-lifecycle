@@ -40,6 +40,38 @@ QR upload uses `multipart/form-data`:
 
 Idempotency is the SHA-256 hash of `tenantId + channelId + decodedPayload`.
 
+Direct channel upload remains a compatibility and manual-operations endpoint.
+The product's normal mobile flow uses detections below.
+
+## Mobile discovery and review
+
+- `POST /detections/commit` submits one phone-recognized QR candidate.
+- `GET /inbox` lists ambiguous detections requiring confirmation.
+- `POST /inbox/:detectionId/accept` creates a channel or assigns the detection
+  to an existing channel.
+- `POST /inbox/:detectionId/ignore` dismisses a detection and removes its
+  uncommitted image.
+- `POST /detections/:detectionId/undo` reverses an automatic create or update.
+
+Detection commit uses `multipart/form-data`:
+
+- `metadata`: JSON produced by local QR/OCR analysis. It contains a stable
+  `clientDetectionId`, asset/timestamp fields, decoded QR payload, recognized
+  text lines, inferred platform/name/expiration, per-field confidence, and an
+  optional tenant-local channel suggestion.
+- `image`: only the image containing the recognized QR; maximum 10 MiB.
+
+The Worker does not perform image recognition. It validates the structured
+metadata, rechecks tenant ownership and channel matching, stores accepted or
+pending images in R2, and persists only the decoded-payload hash. A commit is
+idempotent on `(tenantId, clientDetectionId)`.
+
+High-confidence new channels require at least `0.90` identity confidence.
+Automatic replacement requires at least `0.95` channel-match confidence.
+Everything else enters the inbox. Duplicate payloads are recorded but do not
+create a new QR version. Automatic actions preserve prior channel state so they
+can be undone; an automatically created channel is disabled rather than deleted.
+
 ## Mobile pairing and devices
 
 - `POST /pairing-codes` creates a ten-minute one-time pairing code.

@@ -62,11 +62,11 @@ export function DashboardPage() {
     <div className="page page--dashboard">
       <PageHeading
         eyebrow="社群入口"
-        title="工作台"
-        description="所有会过期的二维码，都从这里保持新鲜。"
+        title="频道状态"
+        description="群码由手机 App 从相册自动发现；这里用于查看状态、复制入口和纠错。"
         action={
-          <Link className="button button--primary" to="/channels/new">
-            <CirclePlus size={17} /> 新增频道
+          <Link className="button button--secondary" to="/channels/new">
+            <CirclePlus size={17} /> 手动创建
           </Link>
         }
       />
@@ -92,9 +92,9 @@ export function DashboardPage() {
       {error ? <ErrorState message={error} onRetry={loadChannels} /> : null}
       {channels?.length === 0 ? (
         <EmptyState
-          title="建立第一个长期入口"
-          description="添加一个社群频道，上传当前二维码，然后把稳定链接放到主页或宣传物料中。"
-          action={<Link className="button button--primary" to="/channels/new"><CirclePlus size={17} /> 新增频道</Link>}
+          title="从手机自动发现第一个群码"
+          description="连接手机后保存微信群、小红书群或 Discord 二维码，App 会自动识别、创建频道并生成稳定入口。"
+          action={<Link className="button button--primary" to="/pairing"><CirclePlus size={17} /> 连接手机</Link>}
         />
       ) : null}
 

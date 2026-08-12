@@ -3,11 +3,13 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { colors } from "@/components/ui";
-import { AppProvider } from "@/context/app-context";
-import { useNotificationRouting } from "@/notifications/push";
+import { AppProvider, useApp } from "@/context/app-context";
+import { useNotificationRouting, usePushTokenRefresh } from "@/notifications/push";
 
 function Navigation() {
+  const { session, setDeviceId } = useApp();
   useNotificationRouting();
+  usePushTokenRefresh(session, setDeviceId);
   return (
     <>
       <StatusBar style="dark" />
@@ -22,8 +24,10 @@ function Navigation() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="pair" options={{ title: "连接部署" }} />
-        <Stack.Screen name="channels/index" options={{ title: "我的群码" }} />
-        <Stack.Screen name="channels/[channelId]" options={{ title: "更新二维码" }} />
+        <Stack.Screen name="discover" options={{ headerShown: false }} />
+        <Stack.Screen name="channels/index" options={{ headerShown: false }} />
+        <Stack.Screen name="channels/[channelId]" options={{ title: "群码详情" }} />
+        <Stack.Screen name="settings" options={{ headerShown: false }} />
       </Stack>
     </>
   );

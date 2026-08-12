@@ -9,6 +9,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { Link } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export const colors = {
@@ -38,6 +39,42 @@ export function Screen({ children }: PropsWithChildren) {
         {children}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type MainRoute = "/discover" | "/channels" | "/settings";
+
+const mainRoutes: Array<{ href: MainRoute; label: string }> = [
+  { href: "/discover", label: "发现" },
+  { href: "/channels", label: "群码" },
+  { href: "/settings", label: "设置" },
+];
+
+export function MainNavigation({ active }: { active: MainRoute }) {
+  return (
+    <View accessibilityRole="tablist" style={styles.mainNavigation}>
+      {mainRoutes.map((route) => (
+        <Link asChild href={route.href} key={route.href}>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: route.href === active }}
+            style={[
+              styles.mainNavigationItem,
+              route.href === active && styles.mainNavigationItemActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.mainNavigationLabel,
+                route.href === active && styles.mainNavigationLabelActive,
+              ]}
+            >
+              {route.label}
+            </Text>
+          </Pressable>
+        </Link>
+      ))}
+    </View>
   );
 }
 
@@ -131,6 +168,24 @@ export const textStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   screen: { flexGrow: 1, gap: 16, padding: 20, paddingBottom: 40 },
+  mainNavigation: {
+    backgroundColor: "#E8ECE8",
+    borderRadius: 14,
+    flexDirection: "row",
+    gap: 3,
+    padding: 3,
+  },
+  mainNavigationItem: {
+    alignItems: "center",
+    borderRadius: 11,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 40,
+    paddingHorizontal: 12,
+  },
+  mainNavigationItemActive: { backgroundColor: colors.surface },
+  mainNavigationLabel: { color: colors.muted, fontSize: 14, fontWeight: "700" },
+  mainNavigationLabelActive: { color: colors.primary },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

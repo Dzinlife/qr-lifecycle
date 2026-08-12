@@ -1,10 +1,16 @@
 import { requireOptionalNativeModule } from "expo";
 
-import type { PhotoPermission, ScanCursor, ScanResult } from "@qr-lifecycle/contracts";
+import type { OcrLine, PhotoPermission, ScanCursor, ScanResult } from "@qr-lifecycle/contracts";
+
+export interface ImageQrAnalysis {
+  payloads: string[];
+  ocrLines: OcrLine[];
+}
 
 interface PhotoQrScannerNativeModule {
   requestPermission(): Promise<PhotoPermission>;
   scanSince(lastCreationTime: number | null, seenAssetIds: string[]): Promise<ScanResult>;
+  analyzeImage(imageUri: string): Promise<ImageQrAnalysis>;
 }
 
 export const PhotoQrScannerNative =

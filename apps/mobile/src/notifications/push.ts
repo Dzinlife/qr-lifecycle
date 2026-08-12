@@ -95,7 +95,9 @@ export function useNotificationRouting() {
       if (!response) return;
       const channelId = notificationChannelId(response.notification.request.content.data);
       if (channelId) {
-        router.push(`/channels/${channelId}`);
+        // Expiry reminders open discovery, not a preselected channel. The app
+        // scans Photos on foreground and matches the saved replacement itself.
+        router.push("/discover");
         Notifications.clearLastNotificationResponse();
       }
     };

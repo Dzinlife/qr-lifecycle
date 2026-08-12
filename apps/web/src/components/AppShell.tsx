@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  CirclePlus,
   LayoutGrid,
   LogOut,
   QrCode,
@@ -11,8 +10,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { api, ApiError, type MeResponse } from "../api/client";
 
 const navigation = [
-  { to: "/", label: "工作台", icon: LayoutGrid, exact: true },
-  { to: "/channels/new", label: "新增频道", icon: CirclePlus },
+  { to: "/", label: "频道状态", icon: LayoutGrid, exact: true },
   { to: "/pairing", label: "连接手机", icon: Smartphone },
   { to: "/settings", label: "设置", icon: Settings },
 ];
@@ -91,7 +89,7 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
       <main className="main-content" key={location.pathname}>{children}</main>
 
       <nav className="bottom-nav" aria-label="移动端导航">
-        {navigation.filter((item) => item.to !== "/channels/new").map((item) => (
+        {navigation.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -102,13 +100,6 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
             <span>{item.label}</span>
           </NavLink>
         ))}
-        <NavLink
-          to="/channels/new"
-          className={({ isActive }) => `bottom-nav__link bottom-nav__add${isActive ? " is-active" : ""}`}
-        >
-          <CirclePlus size={24} aria-hidden="true" />
-          <span>新增</span>
-        </NavLink>
       </nav>
     </div>
   );

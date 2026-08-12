@@ -1,4 +1,15 @@
-import type { Channel, QrCandidate, QrVersion } from "@qr-lifecycle/contracts";
+import type {
+  AcceptInboxItemInput,
+  Channel,
+  CommitDetectionResponse,
+  DetectedCommunityQr,
+  IgnoreDetectionResponse,
+  InboxItem,
+  InboxResponse,
+  QrCandidate,
+  QrVersion,
+  UndoDetectionResponse,
+} from "@qr-lifecycle/contracts";
 
 import { normalizeApiOrigin, parsePairPayload, type PairPayload } from "@/lib/pure";
 import type { MobileSession } from "@/session/storage";
@@ -81,6 +92,19 @@ export async function getChannel(session: MobileSession, channelId: string): Pro
   return "channel" in raw ? raw.channel : raw;
 }
 
+export async function listQrVersions(
+  session: MobileSession,
+  channelId: string,
+): Promise<QrVersion[]> {
+  const raw = await request<QrVersion[] | { qrVersions: QrVersion[] }>(
+    session.deployment.apiOrigin,
+    `/channels/${encodeURIComponent(channelId)}/qr-versions`,
+    { method: "GET" },
+    session.token,
+  );
+  return Array.isArray(raw) ? raw : raw.qrVersions;
+}
+
 function imageFile(candidate: QrCandidate): { uri: string; name: string; type: string } {
   const path = candidate.imageUri.toLowerCase();
   const type = path.endsWith(".png")
@@ -111,6 +135,70 @@ export async function uploadQrCandidate(
     session.token,
   );
   return "qrVersion" in raw ? raw.qrVersion : raw;
+}
+
+export async function commitDetection(
+  session: MobileSession,
+  detection: DetectedCommunityQr,
+  candidate: QrCandidate,
+): Promise<CommitDetectionResponse> {
+  const form = new FormData();
+  form.append("metadata", JSON.stringify(detection));
+  form.append("image", imageFile(candidate) as unknown as Blob);
+
+  return request<CommitDetectionResponse>(
+    session.deployment.apiOrigin,
+    "/detections/commit",
+    { method: "POST", body: form },
+    session.token,
+  );
+}
+
+export async function listInbox(session: MobileSession): Promise<InboxItem[]> {
+  const raw = await request<InboxItem[] | InboxResponse>(
+    session.deployment.apiOrigin,
+    "/inbox",
+    { method: "GET" },
+    session.token,
+  );
+  return Array.isArray(raw) ? raw : raw.items;
+}
+
+export async function acceptInboxItem(
+  session: MobileSession,
+  detectionId: string,
+  input: AcceptInboxItemInput = {},
+): Promise<CommitDetectionResponse> {
+  return request<CommitDetectionResponse>(
+    session.deployment.apiOrigin,
+    `/inbox/${encodeURIComponent(detectionId)}/accept`,
+    { method: "POST", body: JSON.stringify(input) },
+    session.token,
+  );
+}
+
+export async function ignoreInboxItem(
+  session: MobileSession,
+  detectionId: string,
+): Promise<IgnoreDetectionResponse> {
+  return request<IgnoreDetectionResponse>(
+    session.deployment.apiOrigin,
+    `/inbox/${encodeURIComponent(detectionId)}/ignore`,
+    { method: "POST", body: JSON.stringify({}) },
+    session.token,
+  );
+}
+
+export async function undoDetection(
+  session: MobileSession,
+  detectionId: string,
+): Promise<UndoDetectionResponse> {
+  return request<UndoDetectionResponse>(
+    session.deployment.apiOrigin,
+    `/detections/${encodeURIComponent(detectionId)}/undo`,
+    { method: "POST", body: JSON.stringify({}) },
+    session.token,
+  );
 }
 
 export async function updateChannelExpiry(

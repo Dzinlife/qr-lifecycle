@@ -107,12 +107,12 @@ export async function sendDueReminders(
           aps: {
             alert: {
               title: `${row.channel_name} 二维码即将过期`,
-              body: "打开 App，从相册识别并更新最新二维码。",
+              body: "保存新的群二维码后打开 App，系统会自动识别并更新。",
             },
             sound: "default",
           },
           channelId: row.channel_id,
-          route: `/channels/${row.channel_id}/update`,
+          route: "/discover",
         },
       });
       const status = result.ok ? "sent" : "failed";

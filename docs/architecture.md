@@ -11,7 +11,8 @@ accounts and workspaces in the managed service.
 ```text
 Official mobile app
   ├─ Expo / React Native UI
-  ├─ iOS PhotoKit + Vision adapter
+  ├─ iOS PhotoKit + Vision QR/OCR adapter
+  ├─ deterministic local field extraction and matching
   ├─ APNs registration
   └─ deployment pairing credential
              │ HTTPS
@@ -27,8 +28,9 @@ Cloudflare Worker
 Web management app
 ```
 
-The Worker is the single security boundary. Web and mobile clients never read
-D1 or R2 directly.
+The Worker is the single server security boundary. Web and mobile clients never
+read D1 or R2 directly. Image understanding happens only on the phone: there is
+no server-side or cloud-model image analysis path.
 
 ## Distribution modes
 
@@ -54,8 +56,10 @@ interface PhotoQrScanner {
 ```
 
 The iOS implementation uses PhotoKit incremental changes and
-`VNDetectBarcodesRequest`. A future Android implementation can use MediaStore
-and ML Kit without changing application flows or API contracts.
+`VNDetectBarcodesRequest` plus `VNRecognizeTextRequest`. A future Android
+implementation can use MediaStore and ML Kit without changing application flows
+or API contracts. React Native owns orchestration; native adapters return a
+shared structured detection type.
 
 ## Core entities
 
@@ -65,21 +69,32 @@ and ML Kit without changing application flows or API contracts.
 - `sessions`: hashed web/mobile bearer tokens.
 - `channels`: one expiring group invite and one stable public slug.
 - `qr_versions`: immutable QR uploads; one version is active per channel.
+- `detections`: idempotent, structured results produced by the phone, including
+  confidence, decision state, and reversible action metadata.
+- `channel_aliases`: tenant-scoped corrected names used for future matching.
 - `devices`: APNs tokens and notification preferences.
 - `pairing_codes`: short-lived handoff from authenticated web to mobile.
 - `reminder_deliveries`: idempotency and APNs response history.
 
 Every tenant-owned table carries `tenant_id`; every query must include it.
 
-## QR update flow
+## Automatic discovery flow
 
 1. The operator saves a new group QR image to Photos.
-2. The app scans only newly inserted assets when possible.
-3. Vision decodes QR candidates locally.
-4. The app matches decoded candidates against a selected channel or asks once.
-5. The image and decoded payload hash are uploaded to the paired deployment.
-6. The Worker stores the object in R2 and atomically activates a new version.
-7. The stable `/q/:slug` page immediately serves the new QR image.
+2. On launch or foreground entry, the app scans only newly inserted assets when
+   possible. While active it can also react to PhotoKit changes.
+3. Vision decodes QR data and OCR text locally. Deterministic parsers infer the
+   platform, group name, explicit or relative expiration, and field confidence.
+4. The app compares structured signals with the paired tenant's channels. A QR
+   payload is never treated as channel identity because replacement codes change.
+5. The app sends one structured detection and its candidate image. It never sends
+   unrelated Photos assets or requests cloud image understanding.
+6. High-confidence discoveries are created or updated automatically; ambiguous
+   discoveries enter the mobile inbox for one-tap acceptance, assignment, or
+   ignore.
+7. The Worker stores accepted images in R2, preserves immutable QR history, and
+   records enough state to undo automatic actions. The stable `/q/:slug` page
+   immediately follows the active version.
 
 The server treats image bytes and decoded payload as untrusted input. It
 validates size and MIME type and never fetches a client-provided URL.
@@ -88,11 +103,19 @@ validates size and MIME type and never fetches a client-provided URL.
 
 Cloudflare Cron runs every 15 minutes in UTC. It selects channels whose next
 reminder is due and inserts an idempotency record before attempting APNs. The
-app opens directly to the relevant channel update screen.
+app opens the discovery screen, scans newly saved Photos assets, and matches the
+replacement without asking the operator to select a channel first.
 
-Expiration is user-configured in MVP because platform QR formats do not expose
-a dependable expiry timestamp. Later versions may learn defaults from observed
-replacement history.
+Expiration uses explicit OCR dates first, then relative phrases anchored to the
+photo timestamp. Unknown values remain unknown instead of inventing an exact
+date. The web UI remains an auxiliary place to correct metadata.
+
+## Web boundary
+
+The product is mobile-first because group QR codes are generated and saved on
+phones. The web app provides bootstrap, phone pairing, status, stable-link copy,
+history, correction, and manual channel creation as a fallback. It deliberately
+does not offer QR image upload or browser OCR.
 
 ## APNs trust model
 

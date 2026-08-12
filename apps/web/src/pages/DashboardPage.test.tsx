@@ -22,7 +22,7 @@ describe("DashboardPage", () => {
     listChannels.mockResolvedValue({ channels: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
-    expect(await screen.findByRole("heading", { name: "建立第一个长期入口" })).toBeTruthy();
-    expect(screen.getAllByRole<HTMLAnchorElement>("link", { name: /新增频道/ })[0]?.getAttribute("href")).toBe("/channels/new");
+    expect(await screen.findByRole("heading", { name: "从手机自动发现第一个群码" })).toBeTruthy();
+    expect(screen.getByRole<HTMLAnchorElement>("link", { name: /连接手机/ }).getAttribute("href")).toBe("/pairing");
   });
 });

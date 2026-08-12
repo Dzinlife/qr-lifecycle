@@ -21,14 +21,14 @@ export default function PairScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (hydrated && session) return <Redirect href="/channels" />;
+  if (hydrated && session) return <Redirect href="/discover" />;
 
   const submit = async () => {
     setError(null);
     setSubmitting(true);
     try {
       await pair(origin, code);
-      router.replace("/channels");
+      router.replace("/discover");
     } catch (caught) {
       setError(humanizeError(caught));
     } finally {

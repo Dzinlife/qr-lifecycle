@@ -106,9 +106,9 @@ export function ChannelFormPage() {
         <ArrowLeft size={16} /> {channelId ? "返回频道" : "返回工作台"}
       </Link>
       <PageHeading
-        eyebrow={editing ? "频道设置" : "新增长期入口"}
-        title={editing ? "编辑频道" : "添加频道"}
-        description={editing ? "修改名称、公开地址和提醒时间。" : "先建立稳定地址，再上传当前有效的二维码。"}
+        eyebrow={editing ? "频道设置" : "手动兜底"}
+        title={editing ? "编辑频道" : "手动创建频道"}
+        description={editing ? "修正手机识别的名称、公开地址和提醒时间。" : "只有手机无法识别图片时才需要手动创建；二维码仍由手机 App 添加。"}
       />
 
       <form className="editor-card" onSubmit={submit}>
