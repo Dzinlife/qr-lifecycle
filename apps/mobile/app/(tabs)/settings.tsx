@@ -91,7 +91,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <Screen edges={["top"]}>
+    <Screen progressiveTopBlur>
       <View style={styles.header}>
         <Text style={textStyles.eyebrow}>自动化设置</Text>
         <Text style={textStyles.title}>设置</Text>

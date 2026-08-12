@@ -1,15 +1,18 @@
 import type { PropsWithChildren, ReactNode } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  type ScrollViewProps,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 import { SafeAreaView, type Edges } from "react-native-safe-area-context";
+import { ScrollViewMarker } from "react-native-screens/experimental";
 
 export const colors = {
   background: "#F5F4EF",
@@ -30,7 +33,19 @@ export const colors = {
 export function Screen({
   children,
   edges = ["bottom"],
-}: PropsWithChildren<{ edges?: Edges }>) {
+  progressiveTopBlur = false,
+}: PropsWithChildren<{ edges?: Edges; progressiveTopBlur?: boolean }>) {
+  if (progressiveTopBlur) {
+    return (
+      <ProgressiveTopScrollView
+        contentContainerStyle={styles.screen}
+        keyboardShouldPersistTaps="handled"
+      >
+        {children}
+      </ProgressiveTopScrollView>
+    );
+  }
+
   return (
     <SafeAreaView edges={edges} style={styles.safeArea}>
       <ScrollView
@@ -41,6 +56,36 @@ export function Screen({
         {children}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+export function ProgressiveTopScrollView({
+  style,
+  ...props
+}: ScrollViewProps) {
+  const scrollView = (
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      style={style}
+      {...props}
+    />
+  );
+
+  if (Platform.OS !== "ios") {
+    return (
+      <SafeAreaView edges={["top"]} style={styles.safeArea}>
+        {scrollView}
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <ScrollViewMarker
+      scrollEdgeEffects={{ top: "soft" }}
+      style={styles.safeArea}
+    >
+      {scrollView}
+    </ScrollViewMarker>
   );
 }
 

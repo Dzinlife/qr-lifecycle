@@ -2,18 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { Redirect, useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { Channel, ChannelPlatform } from "@qr-lifecycle/contracts";
 
 import { listChannels } from "@/api/client";
-import { Button, Card, Notice, colors, textStyles } from "@/components/ui";
+import {
+  Button,
+  Card,
+  Notice,
+  ProgressiveTopScrollView,
+  colors,
+  textStyles,
+} from "@/components/ui";
 import { useApp } from "@/context/app-context";
 import { humanizeError } from "@/lib/pure";
 
@@ -63,12 +68,11 @@ export default function ChannelsScreen() {
   if (!session) return null;
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        contentInsetAdjustmentBehavior="automatic"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
-      >
+    <ProgressiveTopScrollView
+      contentContainerStyle={styles.content}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
+      style={styles.safeArea}
+    >
         <View style={styles.header}>
           <View style={styles.headerCopy}>
             <Text style={textStyles.eyebrow}>{session.deployment.productName}</Text>
@@ -115,8 +119,7 @@ export default function ChannelsScreen() {
             </Pressable>
           );
         })}
-      </ScrollView>
-    </SafeAreaView>
+    </ProgressiveTopScrollView>
   );
 }
 

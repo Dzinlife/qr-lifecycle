@@ -5,7 +5,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,7 +12,6 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Redirect, useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import type {
   Channel,
@@ -37,6 +35,7 @@ import {
   Button,
   Card,
   Notice,
+  ProgressiveTopScrollView,
   colors,
   textStyles,
 } from "@/components/ui";
@@ -520,17 +519,16 @@ export default function DiscoverScreen() {
   const scanning = ["permission", "scanning", "analyzing", "committing", "cancelling"].includes(phase);
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        contentInsetAdjustmentBehavior="automatic"
-        refreshControl={(
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void loadInboxItems(true)}
-          />
-        )}
-      >
+    <ProgressiveTopScrollView
+      contentContainerStyle={styles.content}
+      refreshControl={(
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => void loadInboxItems(true)}
+        />
+      )}
+      style={styles.safeArea}
+    >
         <View style={styles.hero}>
           <Text style={textStyles.eyebrow}>{session.deployment.productName}</Text>
           <Text style={textStyles.title}>保存群码，剩下的交给这里</Text>
@@ -665,8 +663,7 @@ export default function DiscoverScreen() {
         {inbox.length ? (
           <Button tone="secondary" onPress={() => router.push("/channels")}>查看全部群码</Button>
         ) : null}
-      </ScrollView>
-    </SafeAreaView>
+    </ProgressiveTopScrollView>
   );
 }
 

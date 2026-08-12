@@ -37,7 +37,21 @@ function Navigation() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false }} />
         <Stack.Screen name="web-bind" options={{ title: "绑定官方网站" }} />
-        <Stack.Screen name="channels/[channelId]" options={{ title: "群码详情" }} />
+        <Stack.Screen
+          name="channels/[channelId]"
+          options={{
+            headerBlurEffect: "systemThinMaterial",
+            headerStyle: { backgroundColor: "transparent" },
+            headerTransparent: true,
+            scrollEdgeEffects: {
+              bottom: "hidden",
+              left: "hidden",
+              right: "hidden",
+              top: "hidden",
+            },
+            title: "群码详情",
+          }}
+        />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </>
