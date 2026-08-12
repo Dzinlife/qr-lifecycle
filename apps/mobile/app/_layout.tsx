@@ -1,5 +1,6 @@
 import { DefaultTheme, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { colors } from "@/components/ui";
@@ -54,12 +55,14 @@ function Navigation() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AppProvider>
-        <ThemeProvider value={appTheme}>
-          <Navigation />
-        </ThemeProvider>
-      </AppProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AppProvider>
+          <ThemeProvider value={appTheme}>
+            <Navigation />
+          </ThemeProvider>
+        </AppProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

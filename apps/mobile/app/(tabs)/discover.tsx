@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Animated,
   AppState,
   Image,
   Linking,
   Modal,
-  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
@@ -19,6 +17,18 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from "react-native-gesture-handler";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type {
@@ -177,63 +187,71 @@ function InboxCard({
   const { detection, suggestedChannel } = item;
   const { height: windowHeight } = useWindowDimensions();
   const [previewOpen, setPreviewOpen] = useState(false);
-  const previewTranslateY = useRef(new Animated.Value(0)).current;
-  const closePreview = () => {
-    Animated.timing(previewTranslateY, {
-      duration: 180,
-      toValue: windowHeight,
-      useNativeDriver: true,
-    }).start(() => {
-      setPreviewOpen(false);
-      previewTranslateY.setValue(0);
-    });
-  };
-  const openPreview = () => {
-    previewTranslateY.stopAnimation();
-    previewTranslateY.setValue(0);
+  const previewTranslateY = useSharedValue(0);
+  const finishPreviewClose = useCallback(() => {
+    setPreviewOpen(false);
+    previewTranslateY.value = 0;
+  }, [previewTranslateY]);
+  const closePreview = useCallback(() => {
+    previewTranslateY.value = withTiming(
+      windowHeight,
+      { duration: 180 },
+      (finished) => {
+        if (finished) runOnJS(finishPreviewClose)();
+      },
+    );
+  }, [finishPreviewClose, previewTranslateY, windowHeight]);
+  const openPreview = useCallback(() => {
+    previewTranslateY.value = 0;
     setPreviewOpen(true);
-  };
-  const previewPanResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) =>
-      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onPanResponderMove: (_, gesture) => {
-      previewTranslateY.setValue(gesture.dy >= 0 ? gesture.dy : gesture.dy * 0.12);
-    },
-    onPanResponderRelease: (_, gesture) => {
-      if (gesture.dy > Math.min(160, windowHeight * 0.16) || gesture.vy > 1.05) {
-        closePreview();
+  }, [previewTranslateY]);
+  const previewPanGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetY([-8, 8])
+    .failOffsetX([-36, 36])
+    .onUpdate((event) => {
+      previewTranslateY.value = event.translationY >= 0
+        ? event.translationY
+        : event.translationY * 0.12;
+    })
+    .onEnd((event) => {
+      if (
+        event.translationY > Math.min(160, windowHeight * 0.16)
+        || event.velocityY > 1_050
+      ) {
+        previewTranslateY.value = withTiming(
+          windowHeight,
+          { duration: 180 },
+          (finished) => {
+            if (finished) runOnJS(finishPreviewClose)();
+          },
+        );
         return;
       }
-      Animated.spring(previewTranslateY, {
+      previewTranslateY.value = withSpring(0, {
         damping: 22,
         mass: 0.8,
         stiffness: 240,
-        toValue: 0,
-        useNativeDriver: true,
-      }).start();
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(previewTranslateY, {
-        damping: 22,
-        stiffness: 240,
-        toValue: 0,
-        useNativeDriver: true,
-      }).start();
-    },
-  });
-  const previewProgress = previewTranslateY.interpolate({
-    inputRange: [0, windowHeight * 0.7],
-    outputRange: [0, 1],
-    extrapolate: "clamp",
-  });
-  const previewBackdropOpacity = previewProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.12],
-  });
-  const previewScale = previewProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.88],
-  });
+      });
+    }), [finishPreviewClose, previewTranslateY, windowHeight]);
+  const previewBackdropStyle = useAnimatedStyle(() => {
+    const progress = Math.min(
+      Math.max(previewTranslateY.value / (windowHeight * 0.7), 0),
+      1,
+    );
+    return { opacity: 1 - progress * 0.88 };
+  }, [windowHeight]);
+  const previewContentStyle = useAnimatedStyle(() => {
+    const progress = Math.min(
+      Math.max(previewTranslateY.value / (windowHeight * 0.7), 0),
+      1,
+    );
+    return {
+      transform: [
+        { translateY: previewTranslateY.value },
+        { scale: 1 - progress * 0.12 },
+      ],
+    };
+  }, [windowHeight]);
   const title = detection.name ?? suggestedChannel?.name ?? "未命名群码";
   const platform = detection.platform
     ? platformNames[detection.platform]
@@ -314,41 +332,36 @@ function InboxCard({
         visible={previewOpen}
       >
         {previewOpen ? <StatusBar style="light" /> : null}
-        <View style={styles.previewScreen}>
+        <GestureHandlerRootView style={styles.previewScreen}>
           <Animated.View
             pointerEvents="none"
-            style={[styles.previewBackdrop, { opacity: previewBackdropOpacity }]}
+            style={[styles.previewBackdrop, previewBackdropStyle]}
           />
-          <Animated.View
-            style={[
-              styles.previewContent,
-              {
-                transform: [
-                  { translateY: previewTranslateY },
-                  { scale: previewScale },
-                ],
-              },
-            ]}
-            {...previewPanResponder.panHandlers}
-          >
-            <SafeAreaView style={styles.previewSafeArea}>
-              <View style={styles.previewHeader}>
-                <Text style={styles.previewTitle}>检测原图</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  hitSlop={12}
-                  onPress={closePreview}
-                  style={styles.previewClose}
-                >
-                  <Text style={styles.previewCloseText}>完成</Text>
-                </Pressable>
-              </View>
-              {imageUri ? (
-                <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.previewImage} />
-              ) : null}
-            </SafeAreaView>
-          </Animated.View>
-        </View>
+          <GestureDetector gesture={previewPanGesture}>
+            <Animated.View style={[styles.previewContent, previewContentStyle]}>
+              <SafeAreaView style={styles.previewSafeArea}>
+                <View style={styles.previewHeader}>
+                  <Text style={styles.previewTitle}>检测原图</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={12}
+                    onPress={closePreview}
+                    style={styles.previewClose}
+                  >
+                    <Text style={styles.previewCloseText}>完成</Text>
+                  </Pressable>
+                </View>
+                {imageUri ? (
+                  <Image
+                    resizeMode="contain"
+                    source={{ uri: imageUri }}
+                    style={styles.previewImage}
+                  />
+                ) : null}
+              </SafeAreaView>
+            </Animated.View>
+          </GestureDetector>
+        </GestureHandlerRootView>
       </Modal>
     </Card>
   );
