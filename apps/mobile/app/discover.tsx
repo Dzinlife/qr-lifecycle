@@ -45,9 +45,15 @@ import { useApp } from "@/context/app-context";
 import { humanizeError } from "@/lib/pure";
 import {
   photoQrScanner,
+  PhotoScanCancelledError,
   PhotoScannerUnsupportedError,
 } from "@/scanner/photo-scanner";
 import { toDetectedCommunityQrs } from "@/scanner/community-qr-analysis";
+import {
+  enqueuePendingDetections,
+  loadPendingDetections,
+  removePendingDetection,
+} from "@/scanner/pending-detections";
 import {
   clearScanCursor,
   loadScanCursor,
@@ -60,6 +66,8 @@ type ScanPhase =
   | "scanning"
   | "analyzing"
   | "committing"
+  | "cancelling"
+  | "cancelled"
   | "done"
   | "denied"
   | "unsupported"
@@ -77,6 +85,16 @@ interface RecentDecision {
   detectionId: string;
   action: "auto_create" | "auto_update" | "accepted_create" | "accepted_update";
   name: string;
+}
+
+interface ActiveScanJob {
+  controller: AbortController;
+  id: string;
+}
+
+interface PickedImage {
+  uri: string;
+  assetId?: string;
 }
 
 const DISCOVERY_CURSOR = "discovery";
@@ -105,10 +123,18 @@ function expiryLabel(value: string | null): string {
 
 function phaseLabel(phase: ScanPhase, processed: number, total: number): string | null {
   if (phase === "permission") return "正在请求相册权限…";
-  if (phase === "scanning") return "正在寻找新增的二维码图片…";
-  if (phase === "analyzing") return `正在本机识别群名和到期时间（${total} 张）…`;
+  if (phase === "scanning") {
+    return total ? `正在快速检查照片（${processed}/${total}）…` : "正在读取新增照片…";
+  }
+  if (phase === "analyzing") return "发现二维码，正在本机识别群名和到期时间…";
   if (phase === "committing") return `正在安全更新（${processed}/${total}）…`;
+  if (phase === "cancelling") return "正在停止扫描…";
+  if (phase === "cancelled") return "扫描已停止，已处理的照片不会丢失";
   return null;
+}
+
+function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) throw new PhotoScanCancelledError();
 }
 
 function InboxCard({
@@ -197,6 +223,7 @@ export default function DiscoverScreen() {
   const [busyInboxId, setBusyInboxId] = useState<string | null>(null);
   const [undoingId, setUndoingId] = useState<string | null>(null);
   const scanningRef = useRef(false);
+  const activeJobRef = useRef<ActiveScanJob | null>(null);
   const pickingRef = useRef(false);
   const lastForegroundScanAt = useRef(0);
 
@@ -214,13 +241,11 @@ export default function DiscoverScreen() {
     }
   }, [session]);
 
-  const commitCandidates = useCallback(async (
-    detections: DetectedCommunityQr[],
-    candidates: QrCandidate[],
-  ) => {
+  const drainPendingDetections = useCallback(async (signal: AbortSignal) => {
     if (!session) return;
+    const pending = await loadPendingDetections(session.deployment.apiOrigin);
     const nextSummary: ScanSummary = {
-      scanned: detections.length,
+      scanned: pending.length,
       created: 0,
       updated: 0,
       duplicates: 0,
@@ -229,11 +254,16 @@ export default function DiscoverScreen() {
     const nextRecent: RecentDecision[] = [];
 
     setPhase("committing");
-    setProgress({ processed: 0, total: detections.length });
-    for (const [index, detection] of detections.entries()) {
-      const candidate = candidates[index];
-      if (!candidate) throw new Error("识别结果缺少本地图片，请重新扫描");
-      const response = await commitDetection(session, detection, candidate);
+    setProgress({ processed: 0, total: pending.length });
+    setSummary(nextSummary);
+    for (const [index, item] of pending.entries()) {
+      throwIfCancelled(signal);
+      const response = await commitDetection(
+        session,
+        item.detection,
+        item.candidate,
+        signal,
+      );
       if (response.decision.action === "auto_create") nextSummary.created += 1;
       if (response.decision.action === "auto_update") nextSummary.updated += 1;
       if (response.decision.action === "duplicate") nextSummary.duplicates += 1;
@@ -245,35 +275,56 @@ export default function DiscoverScreen() {
           name: decisionName(response),
         });
       }
-      setProgress({ processed: index + 1, total: detections.length });
+      await removePendingDetection(item.detection.clientDetectionId);
+      setProgress({ processed: index + 1, total: pending.length });
+      setSummary({ ...nextSummary });
+      setRecent([...nextRecent]);
     }
-    setSummary(nextSummary);
-    setRecent(nextRecent);
   }, [session]);
 
   const runScan = useCallback(async ({
     full = false,
-    pickedCandidates,
+    pickedImage,
   }: {
     full?: boolean;
-    pickedCandidates?: QrCandidate[];
+    pickedImage?: PickedImage;
   } = {}) => {
     if (!session || scanningRef.current) return;
     scanningRef.current = true;
+    const job: ActiveScanJob = {
+      id: `scan-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      controller: new AbortController(),
+    };
+    activeJobRef.current = job;
     setError(null);
     setSummary(null);
     setRecent([]);
     try {
       const channels: Channel[] = await listChannels(session);
+      throwIfCancelled(job.controller.signal);
 
-      if (pickedCandidates) {
+      if (pickedImage) {
         setPhase("analyzing");
-        setProgress({ processed: 0, total: pickedCandidates.length });
-        const detections = toDetectedCommunityQrs(pickedCandidates, channels);
-        await commitCandidates(detections, pickedCandidates);
+        setProgress({ processed: 0, total: 1 });
+        const candidates = await photoQrScanner.analyzeImageUri(
+          job.id,
+          pickedImage.uri,
+          channels,
+          { assetId: pickedImage.assetId, creationTime: null },
+        );
+        if (!candidates.length) {
+          throw new Error("这张图片中没有识别到二维码，请选择包含完整群码的图片");
+        }
+        const detections = toDetectedCommunityQrs(candidates, channels);
+        await enqueuePendingDetections(
+          session.deployment.apiOrigin,
+          detections,
+          candidates,
+        );
       } else {
         setPhase("permission");
         const permission = await photoQrScanner.requestPermission();
+        throwIfCancelled(job.controller.signal);
         if (permission.status === "denied") {
           setPhase("denied");
           return;
@@ -284,29 +335,84 @@ export default function DiscoverScreen() {
           ? undefined
           : await loadScanCursor(DISCOVERY_CURSOR);
         setPhase("scanning");
-        const result = await photoQrScanner.scanSince(cursor, channels);
-        if (result.candidates.length === 0) {
-          await saveScanCursor(DISCOVERY_CURSOR, result.cursor);
-          setSummary({ scanned: 0, created: 0, updated: 0, duplicates: 0, needsReview: 0 });
-        } else {
+        setProgress({ processed: 0, total: 0 });
+        const result = await photoQrScanner.scanSince(
+          job.id,
+          cursor,
+          channels,
+          cursor ? 100 : 20,
+        );
+        if (result.candidates.length > 0) {
           setPhase("analyzing");
           setProgress({ processed: 0, total: result.candidates.length });
           const detections = toDetectedCommunityQrs(result.candidates, channels);
-          await commitCandidates(detections, result.candidates);
-          await saveScanCursor(DISCOVERY_CURSOR, result.cursor);
+          await enqueuePendingDetections(
+            session.deployment.apiOrigin,
+            detections,
+            result.candidates,
+          );
         }
+        // Persist after the durable local queue, independently of network upload success.
+        await saveScanCursor(DISCOVERY_CURSOR, result.cursor);
       }
+      throwIfCancelled(job.controller.signal);
+      await drainPendingDetections(job.controller.signal);
       await loadInboxItems();
       setPhase("done");
-      lastForegroundScanAt.current = Date.now();
     } catch (caught) {
-      if (caught instanceof PhotoScannerUnsupportedError) setPhase("unsupported");
-      else setPhase("error");
-      setError(humanizeError(caught));
+      if (caught instanceof PhotoScanCancelledError || job.controller.signal.aborted) {
+        setPhase("cancelled");
+      } else {
+        if (caught instanceof PhotoScannerUnsupportedError) setPhase("unsupported");
+        else setPhase("error");
+        setError(humanizeError(caught));
+      }
     } finally {
+      if (activeJobRef.current?.id === job.id) activeJobRef.current = null;
       scanningRef.current = false;
+      lastForegroundScanAt.current = Date.now();
     }
-  }, [commitCandidates, loadInboxItems, session]);
+  }, [drainPendingDetections, loadInboxItems, session]);
+
+  const stopScan = useCallback(() => {
+    const job = activeJobRef.current;
+    if (!job || job.controller.signal.aborted) return;
+    setPhase("cancelling");
+    job.controller.abort();
+    try {
+      photoQrScanner.cancelScan(job.id);
+    } catch {
+      // Cancellation of the native job is best effort; the JS abort still stops uploads.
+    }
+  }, []);
+
+  useEffect(() => () => {
+    const job = activeJobRef.current;
+    if (!job) return;
+    job.controller.abort();
+    try {
+      photoQrScanner.cancelScan(job.id);
+    } catch {
+      // The module may be unavailable on an unsupported platform.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session) return undefined;
+    try {
+      const subscription = photoQrScanner.addProgressListener((nextProgress) => {
+        if (
+          nextProgress.jobId !== activeJobRef.current?.id
+          || activeJobRef.current.controller.signal.aborted
+        ) return;
+        setProgress({ processed: nextProgress.processed, total: nextProgress.total });
+        setPhase(nextProgress.stage === "recognizing" ? "analyzing" : "scanning");
+      });
+      return () => subscription.remove();
+    } catch {
+      return undefined;
+    }
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -340,20 +446,12 @@ export default function DiscoverScreen() {
       });
       const asset = result.assets?.[0];
       if (result.canceled || !asset) return;
-      const channels = await listChannels(session);
-      setPhase("analyzing");
-      setProgress({ processed: 0, total: 1 });
-      const candidates = await photoQrScanner.analyzeImageUri(asset.uri, channels, {
-        assetId: asset.assetId ?? undefined,
-        creationTime: null,
+      await runScan({
+        pickedImage: {
+          uri: asset.uri,
+          ...(asset.assetId ? { assetId: asset.assetId } : {}),
+        },
       });
-      if (!candidates.length) {
-        setPhase("error");
-        setError("这张图片中没有识别到二维码，请选择包含完整群码的图片");
-        return;
-      }
-      pickingRef.current = false;
-      await runScan({ pickedCandidates: candidates });
     } catch (caught) {
       setPhase(caught instanceof PhotoScannerUnsupportedError ? "unsupported" : "error");
       setError(humanizeError(caught));
@@ -420,7 +518,7 @@ export default function DiscoverScreen() {
   };
 
   const phaseCopy = phaseLabel(phase, progress.processed, progress.total);
-  const scanning = ["permission", "scanning", "analyzing", "committing"].includes(phase);
+  const scanning = ["permission", "scanning", "analyzing", "committing", "cancelling"].includes(phase);
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -476,8 +574,11 @@ export default function DiscoverScreen() {
 
           <View style={styles.actionRow}>
             <View style={styles.flexButton}>
-              <Button disabled={scanning} onPress={() => void runScan()}>
-                {scanning ? "正在扫描…" : "扫描新增照片"}
+              <Button
+                onPress={scanning ? stopScan : () => void runScan()}
+                tone={scanning ? "danger" : "primary"}
+              >
+                {phase === "cancelling" ? "正在停止…" : scanning ? "停止扫描" : "扫描新增照片"}
               </Button>
             </View>
             <View style={styles.flexButton}>

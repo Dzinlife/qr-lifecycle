@@ -82,6 +82,41 @@ test("extracts a Xiaohongshu group and an explicit expiry", () => {
   assert.equal(result.expiresAt, new Date(2026, 7, 15, 18, 30).toISOString());
 });
 
+test("extracts the Xiaohongshu English template from the real Scripod image", () => {
+  const result = enrichQrCandidate(
+    candidate({
+      payload: "http://xhslink.com/m/4h7P0wgQG9L",
+      ocrLines: ocr(
+        "Scripod（17）",
+        "Valid for 28 days （until 2026.9.9）",
+        "Scan the OR code",
+        "to join the group chat",
+        "小红书",
+      ),
+    }),
+    [],
+  );
+
+  assert.equal(result.platform, "xiaohongshu_group");
+  assert.equal(result.name, "Scripod");
+  assert.equal(result.expirySource, "explicit");
+  assert.equal(result.expiresAt, new Date(2026, 8, 9, 23, 59).toISOString());
+});
+
+test("falls back to Xiaohongshu's English duration when the final date is not read", () => {
+  const result = enrichQrCandidate(
+    candidate({
+      payload: "https://xhslink.com/fallback",
+      ocrLines: ocr("Scripod(17)", "Valid for 28 days", "Scan the OR code", "小红书"),
+    }),
+    [],
+  );
+
+  assert.equal(result.name, "Scripod");
+  assert.equal(result.expirySource, "relative");
+  assert.equal(result.expiresAt, "2026-09-09T04:00:00.000Z");
+});
+
 test("recognizes Discord without inventing an expiry", () => {
   const result = enrichQrCandidate(
     candidate({
@@ -95,6 +130,18 @@ test("recognizes Discord without inventing an expiry", () => {
   assert.equal(result.name, "Fallinlife Builders");
   assert.equal(result.expirySource, "unknown");
   assert.equal(result.expiresAt, null);
+});
+
+test("does not strip a parenthesized number outside the Xiaohongshu adapter", () => {
+  const result = enrichQrCandidate(
+    candidate({
+      payload: "https://discord.gg/fallinlife",
+      ocrLines: ocr("You've been invited to join", "Builders (17)", "ACCEPT INVITE"),
+    }),
+    [],
+  );
+
+  assert.equal(result.name, "Builders (17)");
 });
 
 test("keeps the name null when OCR only contains boilerplate", () => {

@@ -137,6 +137,7 @@ export async function commitDetection(
   session: MobileSession,
   detection: DetectedCommunityQr,
   candidate: QrCandidate,
+  signal?: AbortSignal,
 ): Promise<CommitDetectionResponse> {
   const form = new FormData();
   form.append("metadata", JSON.stringify(detection));
@@ -145,7 +146,7 @@ export async function commitDetection(
   return request<CommitDetectionResponse>(
     session.deployment.apiOrigin,
     "/detections/commit",
-    { method: "POST", body: form },
+    { method: "POST", body: form, ...(signal ? { signal } : {}) },
     session.token,
   );
 }

@@ -9,7 +9,10 @@ import type {
   ScanResult,
 } from "@qr-lifecycle/contracts";
 
-import { PhotoQrScannerNative } from "../../modules/photo-qr-scanner";
+import {
+  PhotoQrScannerNative,
+  type ScanProgress,
+} from "../../modules/photo-qr-scanner";
 import {
   enrichQrCandidates,
   toDetectedCommunityQr,
@@ -22,18 +25,33 @@ export interface SelectedImageMetadata {
 
 export interface PhotoQrScanner {
   requestPermission(): Promise<PhotoPermission>;
-  scanSince(cursor?: ScanCursor, channels?: readonly Channel[]): Promise<ScanResult>;
+  scanSince(
+    jobId: string,
+    cursor?: ScanCursor,
+    channels?: readonly Channel[],
+    limit?: number,
+  ): Promise<ScanResult>;
   analyzeImageUri(
+    jobId: string,
     imageUri: string,
     channels?: readonly Channel[],
     metadata?: SelectedImageMetadata,
   ): Promise<QrCandidate[]>;
+  cancelScan(jobId: string): void;
+  addProgressListener(listener: (progress: ScanProgress) => void): { remove(): void };
 }
 
 export class PhotoScannerUnsupportedError extends Error {
   constructor(message = "当前平台还不支持自动相册识别") {
     super(message);
     this.name = "PhotoScannerUnsupportedError";
+  }
+}
+
+export class PhotoScanCancelledError extends Error {
+  constructor() {
+    super("扫描已停止");
+    this.name = "PhotoScanCancelledError";
   }
 }
 
@@ -56,38 +74,67 @@ function selectedAssetId(imageUri: string): string {
   return `selected:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function translateNativeError(error: unknown): never {
+  if (error instanceof Error && error.message.includes("ERR_SCAN_CANCELLED")) {
+    throw new PhotoScanCancelledError();
+  }
+  throw error;
+}
+
+function ephemeralJobId(): string {
+  return `scan-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export const photoQrScanner: PhotoQrScanner = {
   async requestPermission() {
     return requireScanner().requestPermission();
   },
 
-  async scanSince(cursor, channels = []) {
-    const result = await requireScanner().scanSince(
-      cursor?.lastCreationTime ?? null,
-      cursor?.seenAssetIds ?? [],
-    );
-    return {
-      ...result,
-      candidates: enrichQrCandidates(result.candidates, channels),
-    };
+  async scanSince(jobId, cursor, channels = [], limit = 100) {
+    try {
+      const result = await requireScanner().scanSince(
+        jobId,
+        cursor?.lastCreationTime ?? null,
+        cursor?.seenAssetIds ?? [],
+        Math.max(1, Math.min(Math.trunc(limit), 100)),
+      );
+      return {
+        ...result,
+        candidates: enrichQrCandidates(result.candidates, channels),
+      };
+    } catch (error) {
+      translateNativeError(error);
+    }
   },
 
-  async analyzeImageUri(imageUri, channels = [], metadata = {}) {
-    const result = await requireScanner().analyzeImage(imageUri);
-    const assetId = metadata.assetId ?? selectedAssetId(imageUri);
-    const creationTime = metadata.creationTime === undefined
-      ? Date.now()
-      : metadata.creationTime;
-    return enrichQrCandidates(
-      result.payloads.map((payload) => ({
-        assetId,
-        creationTime,
-        payload,
-        imageUri,
-        ocrLines: result.ocrLines,
-      })),
-      channels,
-    );
+  async analyzeImageUri(jobId, imageUri, channels = [], metadata = {}) {
+    try {
+      const result = await requireScanner().analyzeImage(jobId, imageUri);
+      const assetId = metadata.assetId ?? selectedAssetId(imageUri);
+      const creationTime = metadata.creationTime === undefined
+        ? Date.now()
+        : metadata.creationTime;
+      return enrichQrCandidates(
+        result.payloads.map((payload) => ({
+          assetId,
+          creationTime,
+          payload,
+          imageUri,
+          ocrLines: result.ocrLines,
+        })),
+        channels,
+      );
+    } catch (error) {
+      translateNativeError(error);
+    }
+  },
+
+  cancelScan(jobId) {
+    requireScanner().cancelScan(jobId);
+  },
+
+  addProgressListener(listener) {
+    return requireScanner().addListener("onScanProgress", listener);
   },
 };
 
@@ -97,6 +144,7 @@ export async function analyzeQrCandidate(
 ): Promise<DetectedCommunityQr> {
   if (candidate.payload.trim()) return toDetectedCommunityQr(candidate, channels);
   const recognized = await photoQrScanner.analyzeImageUri(
+    ephemeralJobId(),
     candidate.imageUri,
     channels,
     {
@@ -117,6 +165,7 @@ export async function analyzeQrCandidates(
     candidates.map(async (candidate) => {
       if (candidate.payload.trim()) return [toDetectedCommunityQr(candidate, channels)];
       const recognized = await photoQrScanner.analyzeImageUri(
+        ephemeralJobId(),
         candidate.imageUri,
         channels,
         {

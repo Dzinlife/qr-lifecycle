@@ -22,16 +22,21 @@ and the signed app's Bundle ID must stay identical if that identifier changes.
 ## Photo scanning behavior
 
 - iOS requests PhotoKit read/write access and accepts full or limited access.
-- Vision detects QR symbols and recognizes Simplified Chinese/English text in
-  one local pass. Deterministic TypeScript parsers infer platform, group name,
+- A fast Vision barcode-only pass runs on PhotoKit thumbnails. Only images that
+  contain a QR code are loaded at a larger size for Simplified Chinese/English
+  OCR. Deterministic TypeScript adapters infer platform, group name,
   explicit/relative expiration, and confidence without a cloud model.
-- The first scan inspects at most the newest 100 accessible photos. Subsequent
+- The first scan inspects at most the newest 20 accessible photos. Subsequent
   scans use one deployment-wide creation-time cursor and same-timestamp asset
-  IDs. Opening or returning to the app triggers an incremental scan.
+  IDs, in batches of at most 100. Opening or returning to the app triggers an
+  incremental scan, reports progress, and can be stopped.
 - High-confidence results create or update a channel automatically with undo.
   Ambiguous results enter the discovery inbox for one-tap confirmation.
 - Selecting one image runs the same native recognition pipeline; the operator
   never has to paste a decoded QR payload.
+- Recognized candidates are copied into a persistent on-device outbox before
+  the photo cursor advances. Upload errors therefore retry the outbox instead
+  of repeating QR detection and OCR over the same photo batch.
 - Android deliberately reports `unsupported` until the MediaStore + ML Kit
   implementation is added. It never pretends to have automatic recognition.
 

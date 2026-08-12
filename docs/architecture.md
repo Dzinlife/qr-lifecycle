@@ -51,12 +51,15 @@ is an adapter:
 ```ts
 interface PhotoQrScanner {
   requestPermission(): Promise<PhotoPermission>;
-  scanSince(cursor?: ScanCursor): Promise<ScanResult>;
+  scanSince(jobId: string, cursor?: ScanCursor, limit?: number): Promise<ScanResult>;
+  cancelScan(jobId: string): void;
 }
 ```
 
 The iOS implementation uses PhotoKit incremental changes and
-`VNDetectBarcodesRequest` plus `VNRecognizeTextRequest`. A future Android
+`VNDetectBarcodesRequest` plus `VNRecognizeTextRequest`. It detects QR codes on
+small PhotoKit images first and only performs accurate OCR for QR hits. Native
+jobs emit progress and track cancellable PhotoKit and Vision requests. A future Android
 implementation can use MediaStore and ML Kit without changing application flows
 or API contracts. React Native owns orchestration; native adapters return a
 shared structured detection type.
@@ -83,11 +86,14 @@ Every tenant-owned table carries `tenant_id`; every query must include it.
 1. The operator saves a new group QR image to Photos.
 2. On launch or foreground entry, the app scans only newly inserted assets when
    possible. While active it can also react to PhotoKit changes.
-3. Vision decodes QR data and OCR text locally. Deterministic parsers infer the
+3. Vision first decodes QR data from thumbnails, then OCRs only QR-bearing
+   images locally. Deterministic platform adapters infer the
    platform, group name, explicit or relative expiration, and field confidence.
 4. The app compares structured signals with the paired tenant's channels. A QR
    payload is never treated as channel identity because replacement codes change.
-5. The app sends one structured detection and its candidate image. It never sends
+5. Before advancing the PhotoKit cursor, the app copies each detection and its
+   image into a durable device outbox. Upload failure retries this outbox without
+   repeating OCR. The app then sends one structured detection and its candidate image. It never sends
    unrelated Photos assets or requests cloud image understanding.
 6. High-confidence discoveries are created or updated automatically; ambiguous
    discoveries enter the mobile inbox for one-tap acceptance, assignment, or

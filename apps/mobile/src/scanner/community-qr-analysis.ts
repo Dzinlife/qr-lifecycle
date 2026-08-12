@@ -38,6 +38,9 @@ const BOILERPLATE_PATTERNS = [
   /discord/iu,
   /you.?ve been invited/iu,
   /join (this |the )?(server|group)/iu,
+  /scan (?:the )?[qo]r code/iu,
+  /to join (?:the )?group chat/iu,
+  /valid for\s+\d+\s+days?/iu,
   /accept invite/iu,
   /members? online/iu,
   /^群聊$/u,
@@ -106,7 +109,15 @@ function cleanCapturedName(value: string): string | null {
   return cleaned;
 }
 
-function explicitName(lines: string[]): string | null {
+function cleanPlatformName(value: string, platform: ChannelPlatform): string | null {
+  const platformCleaned = platform === "xiaohongshu_group"
+    // Xiaohongshu renders the current member count after the group title.
+    ? value.replace(/\s*[（(]\s*\d+\s*[）)]\s*$/u, "")
+    : value;
+  return cleanCapturedName(platformCleaned);
+}
+
+function explicitName(lines: string[], platform: ChannelPlatform): string | null {
   const joined = lines.join("\n");
   const patterns = [
     /[“"「『【]([^\n”"」』】]{2,120})[”"」』】].{0,12}邀请.{0,8}(?:加入|进入)/u,
@@ -119,15 +130,15 @@ function explicitName(lines: string[]): string | null {
   for (const pattern of patterns) {
     const name = pattern.exec(joined)?.[1];
     if (name) {
-      const cleaned = cleanCapturedName(name);
+      const cleaned = cleanPlatformName(name, platform);
       if (cleaned && !BOILERPLATE_PATTERNS.some((item) => item.test(cleaned))) return cleaned;
     }
   }
   return null;
 }
 
-function isPlausibleTitle(line: string): boolean {
-  const cleaned = cleanCapturedName(line);
+function isPlausibleTitle(line: string, platform: ChannelPlatform): boolean {
+  const cleaned = cleanPlatformName(line, platform);
   if (!cleaned) return false;
   if (BOILERPLATE_PATTERNS.some((pattern) => pattern.test(cleaned))) return false;
   if (/^(?:\d{1,2}[:：]\d{2}|\d+|[.·•_-]+)$/u.test(cleaned)) return false;
@@ -135,8 +146,11 @@ function isPlausibleTitle(line: string): boolean {
   return /[\p{L}\p{N}]/u.test(cleaned);
 }
 
-function inferName(lines: string[]): { name: string | null; score: number } {
-  const captured = explicitName(lines);
+function inferName(
+  lines: string[],
+  platform: ChannelPlatform,
+): { name: string | null; score: number } {
+  const captured = explicitName(lines, platform);
   if (captured) return { name: captured, score: 0.95 };
 
   const invitationIndex = lines.findIndex((line) =>
@@ -145,15 +159,15 @@ function inferName(lines: string[]): { name: string | null; score: number } {
   if (invitationIndex >= 0) {
     for (const offset of [-1, 1, -2, 2]) {
       const line = lines[invitationIndex + offset];
-      if (line && isPlausibleTitle(line)) {
-        return { name: cleanCapturedName(line), score: 0.76 };
+      if (line && isPlausibleTitle(line, platform)) {
+        return { name: cleanPlatformName(line, platform), score: 0.76 };
       }
     }
   }
 
-  const title = lines.find(isPlausibleTitle);
+  const title = lines.find((line) => isPlausibleTitle(line, platform));
   return title
-    ? { name: cleanCapturedName(title), score: 0.58 }
+    ? { name: cleanPlatformName(title, platform), score: 0.58 }
     : { name: null, score: 0 };
 }
 
@@ -172,8 +186,9 @@ function validDate(year: number, month: number, day: number, hour: number, minut
 }
 
 function inferExplicitExpiry(lines: string[], base: Date): Date | null {
-  for (const line of lines) {
-    if (!/(有效|过期|失效|截止|到期|expires?|valid until)/iu.test(line)) continue;
+  for (const rawLine of lines) {
+    const line = rawLine.normalize("NFKC");
+    if (!/(有效|过期|失效|截止|到期|expires?|valid (?:for|until))/iu.test(line)) continue;
 
     const fullDate = /(?:(20\d{2})\s*[年/.\-])?(\d{1,2})\s*[月/.\-](\d{1,2})\s*日?(?:\s*(\d{1,2})\s*[时:：]\s*(\d{1,2})\s*分?)?/u.exec(line);
     if (!fullDate) continue;
@@ -200,12 +215,14 @@ function inferExpiry(candidate: QrCandidate, now: Date): ExpiryInference {
   const explicit = inferExplicitExpiry(lines, base);
   if (explicit) return { expiresAt: explicit.toISOString(), source: "explicit", score: 0.96 };
 
-  for (const line of lines) {
-    if (!/(有效|过期|失效|截止|到期|expires?)/iu.test(line)) continue;
+  for (const rawLine of lines) {
+    const line = rawLine.normalize("NFKC");
+    if (!/(有效|过期|失效|截止|到期|expires?|valid for)/iu.test(line)) continue;
     const relative = /(\d{1,3})\s*(分钟|小时|天|日|周|星期)(?:之?内|后)?/u.exec(line);
-    if (!relative) continue;
-    const amount = Number(relative[1]);
-    const unit = relative[2];
+    const englishRelative = /valid for\s+(\d{1,3})\s+days?/iu.exec(line);
+    if (!relative && !englishRelative) continue;
+    const amount = Number(relative?.[1] ?? englishRelative?.[1]);
+    const unit = relative?.[2] ?? "days";
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const multiplier =
       unit === "分钟"
@@ -311,7 +328,7 @@ export function enrichQrCandidate(
 ): QrCandidate {
   const lines = textFor(candidate);
   const platform = platformScore(candidate);
-  const name = inferName(lines);
+  const name = inferName(lines, platform.platform);
   const expiry = inferExpiry(candidate, options.now ?? new Date());
   const match = matchChannel(name.name, platform.platform, channels);
 

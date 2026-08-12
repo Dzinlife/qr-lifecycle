@@ -9,7 +9,7 @@ Pod::Spec.new do |s|
   s.source         = { git: '' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
-  s.frameworks     = 'Photos', 'Vision', 'UniformTypeIdentifiers'
+  s.frameworks     = 'ImageIO', 'Photos', 'UIKit', 'Vision'
   s.source_files   = '**/*.swift'
   s.swift_version  = '5.9'
   s.pod_target_xcconfig = {

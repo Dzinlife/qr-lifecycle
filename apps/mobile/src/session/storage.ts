@@ -2,6 +2,8 @@ import * as SecureStore from "expo-secure-store";
 
 import type { DeploymentInfo, ScanCursor } from "@qr-lifecycle/contracts";
 
+import { clearPendingDetections } from "@/scanner/pending-detections";
+
 const SESSION_KEY = "qr-lifecycle.mobile-session.v1";
 const SCAN_CURSOR_KEY = "qr-lifecycle.photo-cursor.global.v2";
 
@@ -35,7 +37,7 @@ export async function loadSession(): Promise<MobileSession | null> {
 export async function saveSession(session: MobileSession): Promise<void> {
   const previous = await loadSession();
   if (previous && previous.deployment.apiOrigin !== session.deployment.apiOrigin) {
-    await clearScanCursor();
+    await Promise.all([clearScanCursor(), clearPendingDetections()]);
   }
   await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session), {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -46,6 +48,7 @@ export async function clearSession(): Promise<void> {
   await Promise.all([
     SecureStore.deleteItemAsync(SESSION_KEY),
     clearScanCursor(),
+    clearPendingDetections(),
   ]);
 }
 
