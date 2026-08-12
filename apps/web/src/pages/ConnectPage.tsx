@@ -6,7 +6,11 @@ import { api, ApiError, type CreateWebBindingResponse } from "../api/client";
 
 type ConnectPhase = "creating" | "waiting" | "approved" | "expired" | "error";
 
-export function ConnectPage({ onAuthenticated }: { onAuthenticated: () => void }) {
+export function ConnectPage({
+  onAuthenticated,
+}: {
+  onAuthenticated: () => void | Promise<void>;
+}) {
   const generation = useRef(0);
   const [request, setRequest] = useState<CreateWebBindingResponse | null>(null);
   const [qrImage, setQrImage] = useState<string | null>(null);
@@ -46,7 +50,7 @@ export function ConnectPage({ onAuthenticated }: { onAuthenticated: () => void }
   }, [create]);
 
   useEffect(() => {
-    if (!request || phase !== "waiting") return;
+    if (!request) return;
     const current = generation.current;
     let timer: number | undefined;
     let stopped = false;
@@ -65,7 +69,7 @@ export function ConnectPage({ onAuthenticated }: { onAuthenticated: () => void }
         if (result.status === "approved") {
           setPhase("approved");
           await api.consumeWebBinding(request.binding.id, request.browserSecret);
-          if (!stopped && generation.current === current) onAuthenticated();
+          if (!stopped && generation.current === current) await onAuthenticated();
           return;
         }
         timer = window.setTimeout(() => void poll(), 1_200);
@@ -81,7 +85,7 @@ export function ConnectPage({ onAuthenticated }: { onAuthenticated: () => void }
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [onAuthenticated, phase, request]);
+  }, [onAuthenticated, request]);
 
   return (
     <main className="auth-layout">

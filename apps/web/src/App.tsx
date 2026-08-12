@@ -54,7 +54,7 @@ export function App() {
     return <div className="standalone-state"><ErrorState message={error} onRetry={() => void checkSession()} /></div>;
   }
   if (needsBinding || !me) {
-    return <ConnectPage onAuthenticated={() => void checkSession()} />;
+    return <ConnectPage onAuthenticated={checkSession} />;
   }
 
   return (
