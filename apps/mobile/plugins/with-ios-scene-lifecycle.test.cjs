@@ -40,3 +40,12 @@ test("push environment follows Xcode signing configuration", () => {
   assert.equal(_internals.pushEnvironmentForConfiguration("Debug"), "development");
   assert.equal(_internals.pushEnvironmentForConfiguration('"Release"'), "production");
 });
+
+test("plugin disables precompiled Expo modules to preserve the React linkage model", () => {
+  const source = require("node:fs").readFileSync(
+    require.resolve("./with-ios-scene-lifecycle.cjs"),
+    "utf8",
+  );
+
+  assert.match(source, /EXPO_USE_PRECOMPILED_MODULES = "false"/);
+});

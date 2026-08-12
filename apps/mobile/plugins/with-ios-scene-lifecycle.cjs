@@ -4,6 +4,7 @@ const {
   withAppDelegate,
   withEntitlementsPlist,
   withInfoPlist,
+  withPodfileProperties,
   withXcodeProject,
 } = require("expo/config-plugins");
 
@@ -188,6 +189,17 @@ function pushEnvironmentForConfiguration(name) {
 }
 
 function withIosSceneLifecycle(config) {
+  config = withPodfileProperties(config, (configWithProperties) => {
+    // Expo's precompiled modules are linked against the prebuilt dynamic
+    // React.framework. React Native can legitimately fall back to a source
+    // build when that artifact is unavailable, which would leave the app with
+    // static React code but precompiled Expo frameworks that still require the
+    // missing dynamic framework at launch. Building Expo modules from source
+    // keeps the linkage model consistent with React Native's actual choice.
+    configWithProperties.modResults.EXPO_USE_PRECOMPILED_MODULES = "false";
+    return configWithProperties;
+  });
+
   config = withInfoPlist(config, (configWithPlist) => {
     configWithPlist.modResults.UIApplicationSceneManifest = sceneManifest;
     return configWithPlist;
