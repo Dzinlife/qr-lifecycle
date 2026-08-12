@@ -41,6 +41,7 @@ import {
   type QrVersionRow,
 } from "./models";
 import { sendDueReminders } from "./reminders";
+import { renderQrPng } from "./qr-png";
 
 const API_PREFIX = "/api/v1";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -950,6 +951,18 @@ function unavailablePage(productName: string): Response {
   );
 }
 
+function publicImageNotFound(): Response {
+  return new Response(null, {
+    status: 404,
+    headers: {
+      "cache-control": "no-store",
+      "access-control-allow-origin": "*",
+      "cross-origin-resource-policy": "cross-origin",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
 async function publicQrPage(env: Env, slug: string): Promise<Response> {
   const channel = await publicChannel(env, slug);
   if (!channel?.active_qr_version_id || !channel.object_key) {
@@ -979,29 +992,9 @@ async function publicQrImage(
   slug: string,
 ): Promise<Response> {
   const channel = await publicChannel(env, slug);
-  if (!channel?.object_key) {
-    return new Response(null, {
-      status: 404,
-      headers: {
-        "cache-control": "no-store",
-        "access-control-allow-origin": "*",
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff",
-      },
-    });
-  }
+  if (!channel?.object_key) return publicImageNotFound();
   const object = await env.QR_BUCKET.get(channel.object_key);
-  if (!object) {
-    return new Response(null, {
-      status: 404,
-      headers: {
-        "cache-control": "no-store",
-        "access-control-allow-origin": "*",
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff",
-      },
-    });
-  }
+  if (!object) return publicImageNotFound();
   if (request.headers.get("if-none-match") === object.httpEtag) {
     return new Response(null, {
       status: 304,
@@ -1025,6 +1018,30 @@ async function publicQrImage(
   headers.set("cross-origin-resource-policy", "cross-origin");
   headers.set("x-content-type-options", "nosniff");
   return new Response(object.body, { headers });
+}
+
+async function publicRelayQr(
+  request: Request,
+  env: Env,
+  slug: string,
+): Promise<Response> {
+  const channel = await publicChannel(env, slug);
+  if (!channel) return publicImageNotFound();
+
+  const requestUrl = new URL(request.url);
+  const permanentUrl = `${requestUrl.origin}/q/${encodeURIComponent(slug)}`;
+  const body = await renderQrPng(permanentUrl);
+  return new Response(body.buffer, {
+    headers: {
+      "content-type": "image/png",
+      "content-length": String(body.byteLength),
+      "content-disposition": 'inline; filename="fallinlife-permanent-qr.png"',
+      "cache-control": "public, max-age=31536000, immutable",
+      "access-control-allow-origin": "*",
+      "cross-origin-resource-policy": "cross-origin",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 async function routeApi(
@@ -1143,6 +1160,10 @@ export default {
       const imageMatch = /^\/q\/([^/]+)\/image$/u.exec(url.pathname);
       if (imageMatch?.[1] && request.method === "GET") {
         return publicQrImage(request, env, decodeURIComponent(imageMatch[1]));
+      }
+      const relayMatch = /^\/q\/([^/]+)\/relay\.png$/u.exec(url.pathname);
+      if (relayMatch?.[1] && request.method === "GET") {
+        return publicRelayQr(request, env, decodeURIComponent(relayMatch[1]));
       }
       const pageMatch = /^\/q\/([^/]+)$/u.exec(url.pathname);
       if (pageMatch?.[1] && request.method === "GET") {

@@ -278,6 +278,11 @@ p, h1, h2, h3, dl, dd { margin: 0; }
 .qr-preview--empty { align-content: center; gap: 8px; color: #9da49f; border-style: dashed; }
 .qr-preview--empty strong { color: #5e6862; font-size: 13px; }
 .qr-preview--empty span { font-size: 10px; }
+.qr-preview--relay img { image-rendering: pixelated; }
+.entry-explanation { margin-top: 16px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.entry-url { display: block; margin-top: 14px; overflow: hidden; padding: 10px 11px; border-radius: 9px; color: #66716a; background: var(--surface-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.entry-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+.entry-actions .button { flex: 1 1 auto; }
 .detail-list { display: grid; margin: 17px 0; }
 .detail-list > div { display: flex; justify-content: space-between; gap: 15px; padding: 11px 0; border-bottom: 1px solid #edf0ec; font-size: 11px; }
 .detail-list dt { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
@@ -295,6 +300,7 @@ p, h1, h2, h3, dl, dd { margin: 0; }
 .automation-steps { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-soft); }
 .automation-steps p { display: flex; align-items: flex-start; gap: 11px; color: #56615b; font-size: 11px; line-height: 1.65; }
 .automation-steps strong { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border-radius: 8px; color: var(--brand); background: var(--brand-soft); font-size: 10px; }
+.mobile-automation-card { grid-column: 1 / -1; }
 .history-card { margin-top: 16px; padding: 23px; }
 .history-empty { display: flex; min-height: 100px; align-items: center; justify-content: center; gap: 9px; color: var(--muted); border: 1px dashed var(--line); border-radius: 11px; font-size: 11px; }
 .history-list { display: grid; }
@@ -379,9 +385,6 @@ p, h1, h2, h3, dl, dd { margin: 0; }
 @media (max-width: 1050px) {
   .page { padding-inline: 34px; }
   .detail-grid { grid-template-columns: 1fr; }
-  .current-qr-card { display: grid; grid-template-columns: 1fr 1fr; column-gap: 22px; }
-  .current-qr-card .card-heading, .current-qr-card .button--wide { grid-column: 1 / -1; }
-  .current-qr-card .qr-preview { grid-row: span 2; }
   .auth-layout { grid-template-columns: 1fr 420px; }
   .auth-story { padding-inline: 40px; }
   .auth-flow { display: none; }

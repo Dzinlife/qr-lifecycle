@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  Download,
   ExternalLink,
   History,
   Pencil,
@@ -28,7 +29,7 @@ export function ChannelDetailPage() {
   const [versions, setVersions] = useState<QrVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"relay" | "image" | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -47,11 +48,10 @@ export function ChannelDetailPage() {
   }, [channelId]);
 
   useEffect(load, [load]);
-  const copyPublicImageUrl = async () => {
-    if (!channel) return;
-    await navigator.clipboard.writeText(`${api.getApiOrigin()}/q/${channel.slug}/image`);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1_500);
+  const copyUrl = async (value: string, target: "relay" | "image") => {
+    await navigator.clipboard.writeText(value);
+    setCopied(target);
+    window.setTimeout(() => setCopied(null), 1_500);
   };
 
   const deleteChannel = async () => {
@@ -69,6 +69,7 @@ export function ChannelDetailPage() {
 
   const status = getChannelStatus(channel);
   const publicUrl = `${api.getApiOrigin()}/q/${channel.slug}`;
+  const relayQrImageUrl = `${publicUrl}/relay.png`;
   const publicImageUrl = `${publicUrl}/image`;
 
   return (
@@ -77,21 +78,50 @@ export function ChannelDetailPage() {
       <PageHeading
         eyebrow="频道详情"
         title={channel.name}
-        description={publicImageUrl}
+        description="永久中转码与固定原生群码图片同时可用。"
         action={
-          <div className="button-group">
-            <button className="button button--secondary" type="button" onClick={() => void copyPublicImageUrl()}>
-              {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "已复制" : "复制图片地址"}
-            </button>
-            <Link className="button button--primary" to={`/channels/${channel.id}/edit`}><Pencil size={16} /> 编辑</Link>
-          </div>
+          <Link className="button button--primary" to={`/channels/${channel.id}/edit`}><Pencil size={16} /> 编辑</Link>
         }
       />
 
       <section className="detail-grid">
+        <article className="current-qr-card relay-qr-card">
+          <div className="card-heading">
+            <div><p className="eyebrow">永久不变</p><h2>永久中转码</h2></div>
+            <QrCode size={22} />
+          </div>
+          <div className="qr-preview qr-preview--relay">
+            <img src={relayQrImageUrl} alt={`${channel.name} 永久中转二维码`} />
+          </div>
+          <p className="entry-explanation">
+            这个二维码编码的是永久页面。下载或印刷一次即可；更新群码后无需重新替换它。
+          </p>
+          <code className="entry-url">{publicUrl}</code>
+          <div className="entry-actions">
+            <a
+              className="button button--secondary button--small"
+              download={`${channel.slug}-permanent-qr.png`}
+              href={relayQrImageUrl}
+            >
+              <Download size={15} /> 保存中转码
+            </a>
+            <button
+              className="button button--secondary button--small"
+              type="button"
+              onClick={() => void copyUrl(publicUrl, "relay")}
+            >
+              {copied === "relay" ? <Check size={15} /> : <Copy size={15} />}
+              {copied === "relay" ? "已复制" : "复制永久地址"}
+            </button>
+            <a className="button button--ghost button--small" href={publicUrl} target="_blank" rel="noreferrer">
+              打开中转页 <ExternalLink size={15} />
+            </a>
+          </div>
+        </article>
+
         <article className="current-qr-card">
           <div className="card-heading">
-            <div><p className="eyebrow">当前公开版本</p><h2>有效二维码</h2></div>
+            <div><p className="eyebrow">自动更新</p><h2>当前原生群码</h2></div>
             <span className={`status-badge status-badge--${status.tone}`}><i />{status.label}</span>
           </div>
           <div className={`qr-preview${channel.activeQrVersionId ? "" : " qr-preview--empty"}`}>
@@ -108,14 +138,25 @@ export function ChannelDetailPage() {
             <div><dt><CalendarClock size={15} /> 到期时间</dt><dd>{formatDateTime(channel.expiresAt)}</dd></div>
             <div><dt><History size={15} /> 版本数量</dt><dd>{versions.length} 个</dd></div>
           </dl>
-          <a className="button button--ghost button--wide" href={publicUrl} target="_blank" rel="noreferrer">
-            查看公开页面 <ExternalLink size={15} />
-          </a>
+          <code className="entry-url">{publicImageUrl}</code>
+          <div className="entry-actions">
+            <button
+              className="button button--secondary button--small"
+              type="button"
+              onClick={() => void copyUrl(publicImageUrl, "image")}
+            >
+              {copied === "image" ? <Check size={15} /> : <Copy size={15} />}
+              {copied === "image" ? "已复制" : "复制图片地址"}
+            </button>
+            <a className="button button--ghost button--small" href={publicImageUrl} target="_blank" rel="noreferrer">
+              打开当前群码 <ExternalLink size={15} />
+            </a>
+          </div>
         </article>
 
         <article className="upload-card mobile-automation-card">
           <div className="card-heading">
-            <div><p className="eyebrow">手机自动维护</p><h2>在相册中完成更新</h2></div>
+            <div><p className="eyebrow">手机自动维护</p><h2>更新原生群码，中转码保持不变</h2></div>
             <Smartphone size={22} />
           </div>
           <div className="automation-steps">

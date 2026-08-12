@@ -62,7 +62,9 @@ least 0.95 match confidence. Duplicate payloads do not create new QR versions.
 
 ## Public live code
 
-- `GET /q/:slug`
+- `GET /q/:slug` — stable human-facing relay page.
+- `GET /q/:slug/relay.png` — permanent QR image whose encoded value is the
+  stable `/q/:slug` URL. Download or print it once; the QR pixels never change.
 - `GET /q/:slug/image` — stable, cross-origin embeddable image URL that always
   resolves to the current native group QR image. The URL never changes;
   `Cache-Control: no-cache` and ETag validation prevent an old version from

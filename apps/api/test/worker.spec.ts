@@ -271,6 +271,19 @@ describe.sequential("Fallinlife official Worker", () => {
     expect(pageHtml).toContain('src="/q/xiaohongshu-friends/image"');
     expect(pageHtml).not.toContain("/image?v=");
 
+    const relayQr = await fetchApi("/q/xiaohongshu-friends/relay.png");
+    expect(relayQr.status).toBe(200);
+    expect(relayQr.headers.get("content-type")).toBe("image/png");
+    expect(relayQr.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(relayQr.headers.get("content-disposition")).toContain(
+      "fallinlife-permanent-qr.png",
+    );
+    const relayBytes = new Uint8Array(await relayQr.arrayBuffer());
+    expect(relayBytes.byteLength).toBeGreaterThan(1_000);
+    expect([...relayBytes.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+
     const image = await fetchApi("/q/xiaohongshu-friends/image");
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
