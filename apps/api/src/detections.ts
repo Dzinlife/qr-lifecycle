@@ -33,7 +33,7 @@ const AUTO_UPDATE_THRESHOLD = 0.95;
 
 interface DetectionRow {
   id: string;
-  tenant_id: string;
+  account_id: string;
   client_detection_id: string;
   asset_id: string;
   captured_at: string | null;
@@ -97,7 +97,7 @@ function parseJsonColumn<T>(value: string, fallback: T): T {
 function detectionFromRow(row: DetectionRow): Detection {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
+    accountId: row.account_id,
     clientDetectionId: row.client_detection_id,
     assetId: row.asset_id,
     capturedAt: row.captured_at,
@@ -145,48 +145,48 @@ function invalidSchema(issues: readonly { message: string }[]): never {
 
 async function detectionById(
   env: Env,
-  tenantId: string,
+  accountId: string,
   detectionId: string,
 ): Promise<DetectionRow | null> {
   return env.DB.prepare(
-    "SELECT * FROM detections WHERE id = ? AND tenant_id = ? LIMIT 1",
+    "SELECT * FROM detections WHERE id = ? AND account_id = ? LIMIT 1",
   )
-    .bind(detectionId, tenantId)
+    .bind(detectionId, accountId)
     .first<DetectionRow>();
 }
 
 async function channelRowById(
   env: Env,
-  tenantId: string,
+  accountId: string,
   channelId: string | null,
 ): Promise<ChannelRow | null> {
   if (!channelId) return null;
   return env.DB.prepare(
-    "SELECT * FROM channels WHERE id = ? AND tenant_id = ? LIMIT 1",
+    "SELECT * FROM channels WHERE id = ? AND account_id = ? LIMIT 1",
   )
-    .bind(channelId, tenantId)
+    .bind(channelId, accountId)
     .first<ChannelRow>();
 }
 
 async function qrVersionRowById(
   env: Env,
-  tenantId: string,
+  accountId: string,
   versionId: string | null,
 ): Promise<QrVersionRow | null> {
   if (!versionId) return null;
   return env.DB.prepare(
-    `SELECT id, tenant_id, channel_id, decoded_payload_hash, source_asset_id,
+    `SELECT id, account_id, channel_id, decoded_payload_hash, source_asset_id,
             captured_at, activated_at, created_at
-     FROM qr_versions WHERE id = ? AND tenant_id = ? LIMIT 1`,
+     FROM qr_versions WHERE id = ? AND account_id = ? LIMIT 1`,
   )
-    .bind(versionId, tenantId)
+    .bind(versionId, accountId)
     .first<QrVersionRow>();
 }
 
 async function responseForRow(env: Env, row: DetectionRow): Promise<Response> {
   const [channel, qrVersion] = await Promise.all([
-    channelRowById(env, row.tenant_id, row.channel_id),
-    qrVersionRowById(env, row.tenant_id, row.qr_version_id),
+    channelRowById(env, row.account_id, row.channel_id),
+    qrVersionRowById(env, row.account_id, row.qr_version_id),
   ]);
   const body: CommitDetectionResponse = {
     detection: detectionFromRow(row),
@@ -244,14 +244,14 @@ async function generatedSlug(
 }
 
 function createChannelRow(
-  tenantId: string,
+  accountId: string,
   input: { name: string; platform: ChannelPlatform; expiresAt: string | null },
   slug: string,
   now: string,
 ): ChannelRow {
   return {
     id: crypto.randomUUID(),
-    tenant_id: tenantId,
+    account_id: accountId,
     name: input.name,
     platform: input.platform,
     slug,
@@ -323,15 +323,15 @@ async function readCommitForm(request: Request): Promise<{
 
 async function matchChannel(
   env: Env,
-  tenantId: string,
+  accountId: string,
   input: DetectedCommunityQr,
 ): Promise<MatchResult> {
   const channels = await env.DB.prepare(
     `SELECT * FROM channels
-     WHERE tenant_id = ? AND disabled_at IS NULL
+     WHERE account_id = ? AND disabled_at IS NULL
      ORDER BY updated_at DESC LIMIT 1000`,
   )
-    .bind(tenantId)
+    .bind(accountId)
     .all<ChannelRow>();
   const channelMap = new Map(channels.results.map((channel) => [channel.id, channel]));
   const normalized = input.name ? normalizeName(input.name) : "";
@@ -342,9 +342,9 @@ async function matchChannel(
       const aliasRows = normalized
         ? await env.DB.prepare(
             `SELECT 1 AS matched FROM channel_aliases
-             WHERE tenant_id = ? AND channel_id = ? AND normalized_name = ? LIMIT 1`,
+             WHERE account_id = ? AND channel_id = ? AND normalized_name = ? LIMIT 1`,
           )
-            .bind(tenantId, suggested.id, normalized)
+            .bind(accountId, suggested.id, normalized)
             .all<{ matched: number }>()
         : { results: [] };
       const nameMatches =
@@ -359,7 +359,7 @@ async function matchChannel(
             input.fieldConfidences.name,
             0.98,
           ),
-          reason: "Verified the device suggestion using a tenant-local name or alias",
+          reason: "Verified the device suggestion using a account-local name or alias",
           allowAutoCreate: false,
         };
       }
@@ -367,7 +367,7 @@ async function matchChannel(
         channel: suggested,
         confidence: 0,
         reason:
-          "The device suggestion conflicts with the tenant-local channel identity",
+          "The device suggestion conflicts with the account-local channel identity",
         allowAutoCreate: false,
       };
     }
@@ -383,9 +383,9 @@ async function matchChannel(
   }
   const aliasRows = await env.DB.prepare(
     `SELECT channel_id FROM channel_aliases
-     WHERE tenant_id = ? AND normalized_name = ?`,
+     WHERE account_id = ? AND normalized_name = ?`,
   )
-    .bind(tenantId, normalized)
+    .bind(accountId, normalized)
     .all<{ channel_id: string }>();
   const matchingIds = new Set(
     aliasRows.results
@@ -402,7 +402,7 @@ async function matchChannel(
       reason:
         matchingIds.size > 1
           ? "The detected name matches multiple channels"
-          : "No tenant-local channel name or alias matched",
+          : "No account-local channel name or alias matched",
       allowAutoCreate: matchingIds.size === 0,
     };
   }
@@ -419,14 +419,14 @@ async function matchChannel(
   return {
     channel,
     confidence: Math.min(0.98, input.fieldConfidences.name),
-    reason: "Matched one tenant-local normalized channel name or alias",
+    reason: "Matched one account-local normalized channel name or alias",
     allowAutoCreate: false,
   };
 }
 
 function insertAliasStatement(
   env: Env,
-  tenantId: string,
+  accountId: string,
   channelId: string,
   displayName: string | null,
   now: string,
@@ -436,15 +436,15 @@ function insertAliasStatement(
   if (!normalized) return null;
   return env.DB.prepare(
     `INSERT OR IGNORE INTO channel_aliases (
-       id, tenant_id, channel_id, normalized_name, display_name, created_at
+       id, account_id, channel_id, normalized_name, display_name, created_at
      ) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).bind(crypto.randomUUID(), tenantId, channelId, normalized, displayName, now);
+  ).bind(crypto.randomUUID(), accountId, channelId, normalized, displayName, now);
 }
 
 function insertDetectionStatement(env: Env, row: DetectionRow): D1PreparedStatement {
   return env.DB.prepare(
     `INSERT INTO detections (
-       id, tenant_id, client_detection_id, asset_id, captured_at, creation_time,
+       id, account_id, client_detection_id, asset_id, captured_at, creation_time,
        decoded_payload_hash, ocr_lines_json, platform, detected_name,
        detected_expires_at, expiry_source, field_confidences_json,
        suggested_channel_id, match_confidence, status, action,
@@ -488,7 +488,7 @@ function insertDetectionStatement(env: Env, row: DetectionRow): D1PreparedStatem
        undone_at = excluded.undone_at`,
   ).bind(
     row.id,
-    row.tenant_id,
+    row.account_id,
     row.client_detection_id,
     row.asset_id,
     row.captured_at,
@@ -525,7 +525,7 @@ function insertDetectionStatement(env: Env, row: DetectionRow): D1PreparedStatem
 }
 
 function baseDetectionRow(
-  tenantId: string,
+  accountId: string,
   input: DetectedCommunityQr,
   decodedPayloadHash: string,
   image: PendingImage,
@@ -534,7 +534,7 @@ function baseDetectionRow(
 ): DetectionRow {
   return {
     id: crypto.randomUUID(),
-    tenant_id: tenantId,
+    account_id: accountId,
     client_detection_id: input.clientDetectionId,
     asset_id: input.assetId,
     captured_at: input.capturedAt,
@@ -584,7 +584,7 @@ function qrVersionRow(
   }
   return {
     id: crypto.randomUUID(),
-    tenant_id: row.tenant_id,
+    account_id: row.account_id,
     channel_id: channelId,
     object_key: row.pending_object_key,
     content_type: row.pending_content_type,
@@ -603,12 +603,12 @@ function insertQrVersionStatement(
 ): D1PreparedStatement {
   return env.DB.prepare(
     `INSERT INTO qr_versions (
-       id, tenant_id, channel_id, object_key, content_type, byte_size,
+       id, account_id, channel_id, object_key, content_type, byte_size,
        decoded_payload_hash, source_asset_id, captured_at, activated_at, created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     version.id,
-    version.tenant_id,
+    version.account_id,
     version.channel_id,
     version.object_key,
     version.content_type,
@@ -627,13 +627,13 @@ async function existingQrVersion(
   channelId: string,
 ): Promise<QrVersionRow | null> {
   return env.DB.prepare(
-    `SELECT id, tenant_id, channel_id, decoded_payload_hash, source_asset_id,
+    `SELECT id, account_id, channel_id, decoded_payload_hash, source_asset_id,
             captured_at, activated_at, created_at
      FROM qr_versions
-     WHERE tenant_id = ? AND channel_id = ? AND decoded_payload_hash = ?
+     WHERE account_id = ? AND channel_id = ? AND decoded_payload_hash = ?
      LIMIT 1`,
   )
-    .bind(row.tenant_id, channelId, row.decoded_payload_hash)
+    .bind(row.account_id, channelId, row.decoded_payload_hash)
     .first<QrVersionRow>();
 }
 
@@ -672,7 +672,7 @@ async function commitCreate(
 ): Promise<DetectionCommitResult> {
   const now = new Date().toISOString();
   const slug = await generatedSlug(env, input.name, input.platform);
-  const channel = createChannelRow(row.tenant_id, input, slug, now);
+  const channel = createChannelRow(row.account_id, input, slug, now);
   const version = qrVersionRow(row, channel.id, now);
   row.status = "committed";
   row.action = action;
@@ -687,12 +687,12 @@ async function commitCreate(
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO channels (
-         id, tenant_id, name, platform, slug, expires_at, remind_before_minutes,
+         id, account_id, name, platform, slug, expires_at, remind_before_minutes,
          active_qr_version_id, disabled_at, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
     ).bind(
       channel.id,
-      channel.tenant_id,
+      channel.account_id,
       channel.name,
       channel.platform,
       channel.slug,
@@ -704,10 +704,10 @@ async function commitCreate(
     insertQrVersionStatement(env, version),
     env.DB.prepare(
       `UPDATE channels SET active_qr_version_id = ?, updated_at = ?
-       WHERE id = ? AND tenant_id = ?`,
-    ).bind(version.id, now, channel.id, row.tenant_id),
+       WHERE id = ? AND account_id = ?`,
+    ).bind(version.id, now, channel.id, row.account_id),
   ];
-  const alias = insertAliasStatement(env, row.tenant_id, channel.id, input.name, now);
+  const alias = insertAliasStatement(env, row.account_id, channel.id, input.name, now);
   if (alias) statements.push(alias);
   statements.push(insertDetectionStatement(env, row));
   await env.DB.batch(statements);
@@ -759,7 +759,7 @@ async function commitUpdate(
       `UPDATE channels SET
          name = ?, platform = ?, expires_at = ?, active_qr_version_id = ?,
          disabled_at = NULL, updated_at = ?
-       WHERE id = ? AND tenant_id = ?`,
+       WHERE id = ? AND account_id = ?`,
     ).bind(
       updates.name,
       updates.platform,
@@ -767,12 +767,12 @@ async function commitUpdate(
       version.id,
       now,
       channel.id,
-      row.tenant_id,
+      row.account_id,
     ),
   ];
   const alias = insertAliasStatement(
     env,
-    row.tenant_id,
+    row.account_id,
     channel.id,
     row.detected_name,
     now,
@@ -850,19 +850,19 @@ export async function commitDetection(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  const auth = await authenticate(request, env);
+  const auth = await authenticate(request, env, "mobile");
   const { input, image } = await readCommitForm(request);
   const existing = await env.DB.prepare(
     `SELECT * FROM detections
-     WHERE tenant_id = ? AND client_detection_id = ? LIMIT 1`,
+     WHERE account_id = ? AND client_detection_id = ? LIMIT 1`,
   )
-    .bind(auth.tenantId, input.clientDetectionId)
+    .bind(auth.accountId, input.clientDetectionId)
     .first<DetectionRow>();
   if (existing) return responseForRow(env, existing);
 
   const now = new Date().toISOString();
   const detectionId = crypto.randomUUID();
-  const objectKey = `tenants/${auth.tenantId}/detections/${detectionId}`;
+  const objectKey = `accounts/${auth.accountId}/detections/${detectionId}`;
   const contentType = image.type.toLocaleLowerCase();
   await env.QR_BUCKET.put(objectKey, image, {
     httpMetadata: {
@@ -870,18 +870,18 @@ export async function commitDetection(
       cacheControl: "public, max-age=31536000, immutable",
     },
     customMetadata: {
-      tenantId: auth.tenantId,
+      accountId: auth.accountId,
       detectionId,
       source: "on-device",
     },
   });
 
   try {
-    const match = await matchChannel(env, auth.tenantId, input);
+    const match = await matchChannel(env, auth.accountId, input);
     const row = baseDetectionRow(
-      auth.tenantId,
+      auth.accountId,
       input,
-      await sha256(`${auth.tenantId}${input.decodedPayload}`),
+      await sha256(`${auth.accountId}${input.decodedPayload}`),
       { objectKey, contentType, byteSize: image.size },
       match,
       now,
@@ -895,9 +895,9 @@ export async function commitDetection(
     if (error instanceof Error && error.message.includes("UNIQUE")) {
       const raced = await env.DB.prepare(
         `SELECT * FROM detections
-         WHERE tenant_id = ? AND client_detection_id = ? LIMIT 1`,
+         WHERE account_id = ? AND client_detection_id = ? LIMIT 1`,
       )
-        .bind(auth.tenantId, input.clientDetectionId)
+        .bind(auth.accountId, input.clientDetectionId)
         .first<DetectionRow>();
       if (raced) return responseForRow(env, raced);
     }
@@ -909,15 +909,15 @@ export async function listInbox(request: Request, env: Env): Promise<Response> {
   const auth = await authenticate(request, env);
   const result = await env.DB.prepare(
     `SELECT * FROM detections
-     WHERE tenant_id = ? AND status = 'needs_review'
+     WHERE account_id = ? AND status = 'needs_review'
      ORDER BY created_at DESC LIMIT 100`,
   )
-    .bind(auth.tenantId)
+    .bind(auth.accountId)
     .all<DetectionRow>();
   const channels = await env.DB.prepare(
-    "SELECT * FROM channels WHERE tenant_id = ?",
+    "SELECT * FROM channels WHERE account_id = ?",
   )
-    .bind(auth.tenantId)
+    .bind(auth.accountId)
     .all<ChannelRow>();
   const channelMap = new Map(
     channels.results.map((channel) => [channel.id, channelFromRow(channel)]),
@@ -944,7 +944,7 @@ export async function acceptInboxItem(
 ): Promise<Response> {
   const auth = await authenticate(request, env);
   const input = await parseAcceptInput(request);
-  const row = await detectionById(env, auth.tenantId, detectionId);
+  const row = await detectionById(env, auth.accountId, detectionId);
   if (!row) throw new HttpError(404, "detection_not_found", "Detection was not found");
   if (row.status === "committed") return responseForRow(env, row);
   if (row.status !== "needs_review") {
@@ -956,7 +956,7 @@ export async function acceptInboxItem(
     ? null
     : input.channelId ?? row.suggested_channel_id;
   if (channelId) {
-    const channel = await channelRowById(env, auth.tenantId, channelId);
+    const channel = await channelRowById(env, auth.accountId, channelId);
     if (!channel || channel.disabled_at) {
       throw new HttpError(404, "channel_not_found", "Channel was not found");
     }
@@ -1021,7 +1021,7 @@ export async function ignoreInboxItem(
   detectionId: string,
 ): Promise<Response> {
   const auth = await authenticate(request, env);
-  const row = await detectionById(env, auth.tenantId, detectionId);
+  const row = await detectionById(env, auth.accountId, detectionId);
   if (!row) throw new HttpError(404, "detection_not_found", "Detection was not found");
   if (row.status === "ignored") return json({ detection: detectionFromRow(row) });
   if (row.status !== "needs_review") {
@@ -1034,12 +1034,12 @@ export async function ignoreInboxItem(
        status = 'ignored', action = 'ignore', decision_reason = ?,
        pending_object_key = NULL, pending_content_type = NULL,
        pending_byte_size = NULL, updated_at = ?, decided_at = ?
-     WHERE id = ? AND tenant_id = ? AND status = 'needs_review'`,
+     WHERE id = ? AND account_id = ? AND status = 'needs_review'`,
   )
-    .bind("The user ignored this detection", now, now, row.id, auth.tenantId)
+    .bind("The user ignored this detection", now, now, row.id, auth.accountId)
     .run();
   if (objectKey) await env.QR_BUCKET.delete(objectKey);
-  const updated = await detectionById(env, auth.tenantId, row.id);
+  const updated = await detectionById(env, auth.accountId, row.id);
   if (!updated) throw new Error("Ignored detection disappeared");
   return json({ detection: detectionFromRow(updated) });
 }
@@ -1050,10 +1050,10 @@ export async function undoDetection(
   detectionId: string,
 ): Promise<Response> {
   const auth = await authenticate(request, env);
-  const row = await detectionById(env, auth.tenantId, detectionId);
+  const row = await detectionById(env, auth.accountId, detectionId);
   if (!row) throw new HttpError(404, "detection_not_found", "Detection was not found");
   if (row.status === "undone") {
-    const channel = await channelRowById(env, auth.tenantId, row.channel_id);
+    const channel = await channelRowById(env, auth.accountId, row.channel_id);
     return json({
       detection: detectionFromRow(row),
       channel: channel ? channelFromRow(channel) : null,
@@ -1066,7 +1066,7 @@ export async function undoDetection(
   const statements: D1PreparedStatement[] = [];
   let channel: ChannelRow | null = null;
   if (row.channel_id) {
-    channel = await channelRowById(env, auth.tenantId, row.channel_id);
+    channel = await channelRowById(env, auth.accountId, row.channel_id);
   }
   if (row.action !== "duplicate") {
     if (!channel) {
@@ -1083,8 +1083,8 @@ export async function undoDetection(
       statements.push(
         env.DB.prepare(
           `UPDATE channels SET disabled_at = ?, updated_at = ?
-           WHERE id = ? AND tenant_id = ? AND active_qr_version_id = ?`,
-        ).bind(now, now, channel.id, auth.tenantId, row.qr_version_id),
+           WHERE id = ? AND account_id = ? AND active_qr_version_id = ?`,
+        ).bind(now, now, channel.id, auth.accountId, row.qr_version_id),
       );
     } else {
       statements.push(
@@ -1092,7 +1092,7 @@ export async function undoDetection(
           `UPDATE channels SET
              name = ?, platform = ?, expires_at = ?, active_qr_version_id = ?,
              disabled_at = ?, updated_at = ?
-           WHERE id = ? AND tenant_id = ? AND active_qr_version_id = ?`,
+           WHERE id = ? AND account_id = ? AND active_qr_version_id = ?`,
         ).bind(
           row.previous_channel_name,
           row.previous_channel_platform,
@@ -1101,7 +1101,7 @@ export async function undoDetection(
           row.previous_disabled_at,
           now,
           channel.id,
-          auth.tenantId,
+          auth.accountId,
           row.qr_version_id,
         ),
       );
@@ -1112,16 +1112,16 @@ export async function undoDetection(
       `UPDATE detections SET
          status = 'undone', action = 'undo', decision_reason = ?,
          updated_at = ?, undone_at = ?
-       WHERE id = ? AND tenant_id = ? AND status = 'committed'`,
-    ).bind("The committed detection was undone", now, now, row.id, auth.tenantId),
+       WHERE id = ? AND account_id = ? AND status = 'committed'`,
+    ).bind("The committed detection was undone", now, now, row.id, auth.accountId),
   );
   const results = await env.DB.batch(statements);
   if (results.at(-1)?.meta.changes !== 1) {
     throw new HttpError(409, "undo_conflict", "Detection was changed concurrently");
   }
   const [updated, updatedChannel] = await Promise.all([
-    detectionById(env, auth.tenantId, row.id),
-    channelRowById(env, auth.tenantId, row.channel_id),
+    detectionById(env, auth.accountId, row.id),
+    channelRowById(env, auth.accountId, row.channel_id),
   ]);
   if (!updated) throw new Error("Undone detection disappeared");
   return json({

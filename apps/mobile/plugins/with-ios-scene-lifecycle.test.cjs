@@ -35,3 +35,8 @@ test("scene lifecycle artifacts include window ownership and link routing", () =
   assert.match(_internals.sceneDelegateContents, /ExpoAppDelegateSubscriberManager/);
   assert.match(_internals.sceneDelegateContents, /RCTLinkingManager/);
 });
+
+test("push environment follows Xcode signing configuration", () => {
+  assert.equal(_internals.pushEnvironmentForConfiguration("Debug"), "development");
+  assert.equal(_internals.pushEnvironmentForConfiguration('"Release"'), "production");
+});

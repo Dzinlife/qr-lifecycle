@@ -2,7 +2,7 @@
   "expo": {
     "name": "群码续期",
     "slug": "qr-lifecycle",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "orientation": "portrait",
     "scheme": "qrlifecycle",
     "userInterfaceStyle": "automatic",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "appleTeamId": "33CUSDD2Y6",
-      "buildNumber": "7",
+      "buildNumber": "8",
       "bundleIdentifier": "com.fallinlife.qrlifecycle",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "用于自动发现相册中的群二维码，并在本机识别群名称和到期时间。图片理解完全在设备上完成。"
@@ -21,10 +21,18 @@
       "package": "com.fallinlife.qrlifecycle"
     },
     "plugins": [
-      "./plugins/with-ios-scene-lifecycle.cjs",
       "expo-router",
       "expo-secure-store",
       "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "用于扫描官方网站显示的一次性绑定二维码。",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -32,7 +40,8 @@
           "cameraPermission": false,
           "microphonePermission": false
         }
-      ]
+      ],
+      "./plugins/with-ios-scene-lifecycle.cjs"
     ]
   }
 }

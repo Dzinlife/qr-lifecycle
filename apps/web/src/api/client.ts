@@ -1,42 +1,22 @@
 import type {
+  Account,
   Channel,
-  CreateChannelInput,
   DeploymentInfo,
   QrVersion,
   UpdateChannelInput,
+  WebBinding,
+  WebBindingStatus,
 } from "@qr-lifecycle/contracts";
 
-export interface User {
-  id: string;
-  email: string;
-  displayName: string | null;
-}
-
-export interface Tenant {
-  id: string;
-  name: string;
-  slug: string;
-}
-
-export interface SessionResponse {
-  sessionToken: string;
-  recoveryCode?: string;
-  user: User;
-  tenant: Tenant;
-  deployment: DeploymentInfo;
-}
-
 export interface MeResponse {
-  user: User;
-  tenant: Tenant;
-  membership: { role: string };
+  account: Account;
+  session: { id: string; kind: "web" | "mobile" };
   deployment: DeploymentInfo;
 }
 
-export interface HealthResponse {
-  ok: boolean;
-  bootstrapped: boolean;
-  deployment: DeploymentInfo;
+export interface CreateWebBindingResponse {
+  binding: WebBinding;
+  browserSecret: string;
 }
 
 export class ApiError extends Error {
@@ -50,16 +30,7 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = "qr-lifecycle.session-token";
 const configuredOrigin = import.meta.env.VITE_API_ORIGIN?.replace(/\/$/, "") ?? "";
-
-function readToken(): string | null {
-  try {
-    return window.localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
 
 async function parseError(response: Response): Promise<ApiError> {
   try {
@@ -76,24 +47,22 @@ async function parseError(response: Response): Promise<ApiError> {
   }
 }
 
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  authenticated = true,
-): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData) && init.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-
-  const token = readToken();
-  if (authenticated && token) headers.set("Authorization", `Bearer ${token}`);
+  headers.set("Accept", "application/json");
 
   let response: Response;
   try {
-    response = await fetch(`${configuredOrigin}${path}`, { ...init, headers });
+    response = await fetch(`${configuredOrigin}${path}`, {
+      ...init,
+      credentials: "include",
+      headers,
+    });
   } catch {
-    throw new ApiError("无法连接服务器，请检查部署地址和网络。", "network_error", 0);
+    throw new ApiError("无法连接 fallinlife 服务，请稍后重试。", "network_error", 0);
   }
 
   if (!response.ok) throw await parseError(response);
@@ -101,99 +70,51 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-function jsonBody(value: unknown): string {
-  return JSON.stringify(value);
-}
+const jsonBody = (value: unknown) => JSON.stringify(value);
+const bindingHeaders = (browserSecret: string) => ({ "X-Binding-Secret": browserSecret });
 
 export const api = {
   getApiOrigin(): string {
     return configuredOrigin || window.location.origin;
   },
 
-  getSessionToken(): string | null {
-    return readToken();
-  },
-
-  setSessionToken(token: string): void {
-    window.localStorage.setItem(TOKEN_KEY, token);
-  },
-
-  clearSession(): void {
-    window.localStorage.removeItem(TOKEN_KEY);
-  },
-
-  health: () => request<HealthResponse>("/health", {}, false),
-
-  bootstrap: (input: { email?: string; displayName?: string; tenantName?: string }) =>
-    request<SessionResponse>(
-      "/api/v1/bootstrap",
-      { method: "POST", body: jsonBody(input) },
-      false,
-    ),
-
-  requestCode: (email: string) =>
-    request<{ accepted: true; method: string }>(
-      "/api/v1/auth/request-code",
-      { method: "POST", body: jsonBody({ email }) },
-      false,
-    ),
-
-  verifyCode: (email: string, code: string) =>
-    request<SessionResponse>(
-      "/api/v1/auth/verify-code",
-      { method: "POST", body: jsonBody({ email, code }) },
-      false,
-    ),
-
-  verifyRecoveryCode: (email: string, recoveryCode: string) =>
-    request<SessionResponse>(
-      "/api/v1/auth/verify-code",
-      { method: "POST", body: jsonBody({ email, recoveryCode }) },
-      false,
-    ),
-
   me: () => request<MeResponse>("/api/v1/me"),
+
+  createWebBinding: () =>
+    request<CreateWebBindingResponse>("/api/v1/web-bindings", { method: "POST" }),
+
+  getWebBindingStatus: (bindingId: string, browserSecret: string) =>
+    request<{ status: WebBindingStatus; expiresAt: string }>(
+      `/api/v1/web-bindings/${encodeURIComponent(bindingId)}`,
+      { headers: bindingHeaders(browserSecret) },
+    ),
+
+  consumeWebBinding: (bindingId: string, browserSecret: string) =>
+    request<{ connected: true }>(
+      `/api/v1/web-bindings/${encodeURIComponent(bindingId)}/consume`,
+      { method: "POST", headers: bindingHeaders(browserSecret) },
+    ),
+
+  logout: () => request<void>("/api/v1/web/logout", { method: "POST" }),
 
   listChannels: () => request<{ channels: Channel[] }>("/api/v1/channels"),
 
   getChannel: (channelId: string) =>
-    request<{ channel: Channel }>(`/api/v1/channels/${channelId}`),
-
-  createChannel: (input: CreateChannelInput) =>
-    request<{ channel: Channel }>("/api/v1/channels", {
-      method: "POST",
-      body: jsonBody(input),
-    }),
+    request<{ channel: Channel }>(`/api/v1/channels/${encodeURIComponent(channelId)}`),
 
   updateChannel: (channelId: string, input: UpdateChannelInput) =>
-    request<{ channel: Channel }>(`/api/v1/channels/${channelId}`, {
+    request<{ channel: Channel }>(`/api/v1/channels/${encodeURIComponent(channelId)}`, {
       method: "PATCH",
       body: jsonBody(input),
     }),
 
   deleteChannel: (channelId: string) =>
-    request<void>(`/api/v1/channels/${channelId}`, { method: "DELETE" }),
+    request<void>(`/api/v1/channels/${encodeURIComponent(channelId)}`, {
+      method: "DELETE",
+    }),
 
   listQrVersions: (channelId: string) =>
-    request<{ qrVersions: QrVersion[] }>(`/api/v1/channels/${channelId}/qr-versions`),
-
-  uploadQrVersion: (
-    channelId: string,
-    input: { image: File; decodedPayload: string; capturedAt?: string },
-  ) => {
-    const formData = new FormData();
-    formData.append("image", input.image);
-    formData.append("decodedPayload", input.decodedPayload);
-    if (input.capturedAt) formData.append("capturedAt", input.capturedAt);
-    return request<{ qrVersion: QrVersion; channel: Channel }>(
-      `/api/v1/channels/${channelId}/qr-versions`,
-      { method: "POST", body: formData },
-    );
-  },
-
-  createPairingCode: () =>
-    request<{ pairingCode: { code: string; expiresAt: string } }>(
-      "/api/v1/pairing-codes",
-      { method: "POST" },
+    request<{ qrVersions: QrVersion[] }>(
+      `/api/v1/channels/${encodeURIComponent(channelId)}/qr-versions`,
     ),
 };

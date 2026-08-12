@@ -28,7 +28,7 @@ function candidate(overrides: Partial<QrCandidate> = {}): QrCandidate {
 function channel(overrides: Partial<Channel> = {}): Channel {
   return {
     id: "123e4567-e89b-42d3-a456-426614174000",
-    tenantId: "223e4567-e89b-42d3-a456-426614174000",
+    accountId: "223e4567-e89b-42d3-a456-426614174000",
     name: "Fallinlife 创作者交流群",
     platform: "wechat_group",
     slug: "fallinlife-creators",

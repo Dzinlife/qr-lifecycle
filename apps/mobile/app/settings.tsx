@@ -1,6 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Linking, StyleSheet, Text, View } from "react-native";
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
+
+import type { WebSession } from "@qr-lifecycle/contracts";
+
+import { listWebSessions, revokeWebSession } from "@/api/client";
 
 import {
   Button,
@@ -17,12 +21,30 @@ import {
 } from "@/notifications/push";
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { hydrated, session, setDeviceId, disconnect } = useApp();
   const [pushState, setPushState] = useState<PushRegistrationState | null>(null);
   const [enablingPush, setEnablingPush] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [webSessions, setWebSessions] = useState<WebSession[]>([]);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
 
-  if (hydrated && !session) return <Redirect href="/pair" />;
+  const refreshWebSessions = useCallback(async () => {
+    if (!session) return;
+    try {
+      setWebSessions(await listWebSessions(session));
+      setSessionsError(null);
+    } catch {
+      setSessionsError("暂时无法读取已授权浏览器");
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void refreshWebSessions();
+  }, [refreshWebSessions]);
+
+  if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
 
   const enablePush = async () => {
@@ -48,11 +70,44 @@ export default function SettingsScreen() {
       </View>
 
       <Card>
+        <Text style={textStyles.heading}>官方网站</Text>
+        <Text style={textStyles.muted}>
+          在电脑打开官网并显示绑定码，然后用这台手机扫码确认。无需注册或输入密码。
+        </Text>
+        <Button onPress={() => router.push("/web-bind")}>扫描网站绑定码</Button>
+        {sessionsError ? <Notice tone="danger">{sessionsError}</Notice> : null}
+        {webSessions.map((webSession) => (
+          <View key={webSession.id} style={styles.webSession}>
+            <View style={styles.webSessionCopy}>
+              <Text numberOfLines={1} style={textStyles.body}>
+                {webSession.userAgent ?? "未知浏览器"}
+              </Text>
+              <Text style={textStyles.muted}>
+                最近使用 {new Date(webSession.lastUsedAt).toLocaleDateString("zh-CN")}
+              </Text>
+            </View>
+            <Button
+              disabled={revokingId === webSession.id}
+              tone="danger"
+              onPress={() => {
+                setRevokingId(webSession.id);
+                void revokeWebSession(session, webSession.id)
+                  .then(refreshWebSessions)
+                  .finally(() => setRevokingId(null));
+              }}
+            >
+              {revokingId === webSession.id ? "撤销中…" : "撤销"}
+            </Button>
+          </View>
+        ))}
+      </Card>
+
+      <Card>
         <Text style={textStyles.heading}>到期提醒</Text>
         <Text style={textStyles.muted}>
           收到提醒后只需保存新的群二维码，再打开 App；“发现”会自动扫描并更新。
         </Text>
-        {session.deviceId ? (
+        {pushState?.status === "registered" ? (
           <Notice tone="success">此设备已经连接到 APNs。</Notice>
         ) : null}
         {pushState?.status === "denied" ? (
@@ -64,11 +119,9 @@ export default function SettingsScreen() {
           </>
         ) : null}
         {pushState?.status === "unavailable" ? <Notice>{pushState.message}</Notice> : null}
-        {!session.deviceId ? (
-          <Button disabled={enablingPush} onPress={() => void enablePush()}>
-            {enablingPush ? "正在注册…" : "启用通知"}
-          </Button>
-        ) : null}
+        <Button disabled={enablingPush} onPress={() => void enablePush()}>
+          {enablingPush ? "正在注册…" : "启用或刷新通知"}
+        </Button>
       </Card>
 
       <Card>
@@ -82,15 +135,17 @@ export default function SettingsScreen() {
       </Card>
 
       <Card>
-        <Text style={textStyles.heading}>当前部署</Text>
+        <Text style={textStyles.heading}>当前手机身份</Text>
         <Text style={textStyles.body}>{session.deployment.productName}</Text>
-        <Text selectable style={textStyles.muted}>{session.deployment.apiOrigin}</Text>
+        <Text style={textStyles.muted}>
+          频道归属于这台手机建立的私密账号。重装 App 后，App Store 版本可以自动找回。
+        </Text>
         <Button
           disabled={disconnecting}
           tone="danger"
           onPress={() => void disconnectDeployment()}
         >
-          {disconnecting ? "正在断开…" : "断开部署"}
+          {disconnecting ? "正在重置…" : "重置这台设备"}
         </Button>
       </Card>
     </Screen>
@@ -99,4 +154,11 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   header: { gap: 5, marginBottom: 4 },
+  webSession: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    paddingTop: 12,
+  },
+  webSessionCopy: { flex: 1, minWidth: 0 },
 });

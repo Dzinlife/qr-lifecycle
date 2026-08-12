@@ -7,24 +7,26 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
+import * as Device from "expo-device";
 
-import { pairDeployment, unregisterDevice } from "@/api/client";
-import {
-  isValidPairingCode,
-  normalizeApiOrigin,
-  normalizePairingCode,
-} from "@/lib/pure";
+import { bootstrapMobile, unregisterDevice } from "@/api/client";
+import { AppIdentityNative } from "../../modules/app-identity";
 import {
   clearSession,
+  getOrCreateInstallationId,
   loadSession,
   saveSession,
   type MobileSession,
 } from "@/session/storage";
 
+const OFFICIAL_API_ORIGIN =
+  process.env.EXPO_PUBLIC_API_ORIGIN ?? "https://qr-lifecycle-staging.fallinlife.com";
+
 interface AppContextValue {
   hydrated: boolean;
+  initializing: boolean;
   session: MobileSession | null;
-  pair(origin: string, code: string): Promise<void>;
+  initialize(): Promise<void>;
   setDeviceId(deviceId: string | undefined): Promise<void>;
   disconnect(): Promise<void>;
 }
@@ -33,6 +35,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: PropsWithChildren) {
   const [hydrated, setHydrated] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const [session, setSession] = useState<MobileSession | null>(null);
 
   useEffect(() => {
@@ -49,28 +52,42 @@ export function AppProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
-  const pair = useCallback(async (originInput: string, codeInput: string) => {
-    const origin = normalizeApiOrigin(originInput);
-    const code = normalizePairingCode(codeInput);
-    if (!isValidPairingCode(code)) {
-      throw new Error("请输入网页“连接手机”页面生成的 10 位一次性配对码，不要填写恢复码");
+  const initialize = useCallback(async () => {
+    if (initializing) return;
+    setInitializing(true);
+    try {
+      const installationId = await getOrCreateInstallationId();
+      let appTransactionJws: string | undefined;
+      if (AppIdentityNative) {
+        try {
+          appTransactionJws = (await AppIdentityNative.getAppTransactionJws()) ?? undefined;
+        } catch {
+          // Ad Hoc and development builds are not App Store downloads. The official
+          // production service rejects this fallback; staging explicitly permits it.
+        }
+      }
+      const result = await bootstrapMobile(OFFICIAL_API_ORIGIN, {
+        installationId,
+        deviceName: Device.deviceName ?? Device.modelName ?? "iPhone",
+        ...(appTransactionJws ? { appTransactionJws } : {}),
+      });
+      const next: MobileSession = {
+        token: result.sessionToken,
+        accountId: result.account.id,
+        deviceId: result.device.id,
+        deployment: result.deployment,
+      };
+      await saveSession(next);
+      setSession(next);
+    } finally {
+      setInitializing(false);
     }
-    const paired = await pairDeployment(origin, code);
-    const next: MobileSession = {
-      token: paired.sessionToken,
-      deployment: paired.deployment,
-    };
-    await saveSession(next);
-    setSession(next);
-  }, []);
+  }, [initializing]);
 
   const setDeviceId = useCallback(
     async (deviceId: string | undefined) => {
-      if (!session) return;
-      const next: MobileSession = {
-        ...session,
-        ...(deviceId === undefined ? {} : { deviceId }),
-      };
+      if (!session || !deviceId || deviceId === session.deviceId) return;
+      const next: MobileSession = { ...session, deviceId };
       await saveSession(next);
       setSession(next);
     },
@@ -85,14 +102,14 @@ export function AppProvider({ children }: PropsWithChildren) {
       try {
         await unregisterDevice(current);
       } catch {
-        // Local authority is removed even if a self-hosted deployment is offline.
+        // Local authority is removed even when the official service is unavailable.
       }
     }
   }, [session]);
 
   const value = useMemo(
-    () => ({ hydrated, session, pair, setDeviceId, disconnect }),
-    [disconnect, hydrated, pair, session, setDeviceId],
+    () => ({ hydrated, initializing, session, initialize, setDeviceId, disconnect }),
+    [disconnect, hydrated, initialize, initializing, session, setDeviceId],
   );
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

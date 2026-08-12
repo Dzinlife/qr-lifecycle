@@ -1,10 +1,3 @@
-import type { DeploymentInfo } from "@qr-lifecycle/contracts";
-
-export interface PairPayload {
-  sessionToken: string;
-  deployment: DeploymentInfo;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -20,7 +13,7 @@ function isLoopback(hostname: string): boolean {
 
 export function normalizeApiOrigin(input: string): string {
   const trimmed = input.trim();
-  if (!trimmed) throw new Error("请输入部署地址");
+  if (!trimmed) throw new Error("服务地址未配置");
 
   const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
     ? trimmed
@@ -29,57 +22,14 @@ export function normalizeApiOrigin(input: string): string {
   try {
     url = new URL(withScheme);
   } catch {
-    throw new Error("部署地址格式不正确");
+    throw new Error("服务地址格式不正确");
   }
 
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname))) {
-    throw new Error("部署地址必须使用 HTTPS（本机开发地址除外）");
+    throw new Error("服务地址必须使用 HTTPS（本机开发地址除外）");
   }
-  if (url.username || url.password) throw new Error("部署地址不能包含用户名或密码");
+  if (url.username || url.password) throw new Error("服务地址不能包含用户名或密码");
   return url.origin;
-}
-
-export function normalizePairingCode(input: string): string {
-  return input.trim().replace(/\s+/g, "").toUpperCase();
-}
-
-export function isValidPairingCode(input: string): boolean {
-  return /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{10}$/u.test(
-    normalizePairingCode(input),
-  );
-}
-
-export function parsePairPayload(value: unknown): PairPayload {
-  if (!isRecord(value)) throw new Error("配对响应格式不正确");
-
-  const nestedSession = isRecord(value.session) ? value.session : undefined;
-  const sessionToken =
-    (typeof value.sessionToken === "string" && value.sessionToken) ||
-    (typeof value.token === "string" && value.token) ||
-    (nestedSession && typeof nestedSession.token === "string" && nestedSession.token);
-  const deployment = value.deployment;
-
-  if (!sessionToken || !isRecord(deployment)) {
-    throw new Error("配对响应缺少会话或部署信息");
-  }
-  if (
-    (deployment.mode !== "self_hosted" && deployment.mode !== "managed") ||
-    typeof deployment.apiOrigin !== "string" ||
-    typeof deployment.productName !== "string" ||
-    typeof deployment.registrationEnabled !== "boolean"
-  ) {
-    throw new Error("部署信息格式不正确");
-  }
-
-  return {
-    sessionToken,
-    deployment: {
-      mode: deployment.mode,
-      apiOrigin: normalizeApiOrigin(deployment.apiOrigin),
-      productName: deployment.productName,
-      registrationEnabled: deployment.registrationEnabled,
-    },
-  };
 }
 
 export function notificationChannelId(data: unknown): string | null {
@@ -89,6 +39,38 @@ export function notificationChannelId(data: unknown): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)
     ? raw
     : null;
+}
+
+export interface WebBindingQr {
+  bindingId: string;
+  challenge: string;
+}
+
+export function parseWebBindingQr(value: string): WebBindingQr | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "qrlifecycle:" || parsed.hostname !== "web-bind") return null;
+  if (parsed.pathname !== "" && parsed.pathname !== "/") return null;
+  if ([...parsed.searchParams.keys()].some((key) => key !== "id" && key !== "challenge")) {
+    return null;
+  }
+
+  const bindingId = parsed.searchParams.get("id");
+  const challenge = parsed.searchParams.get("challenge");
+  if (
+    !bindingId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bindingId) ||
+    !challenge ||
+    !/^[A-Za-z0-9_-]{43,128}$/.test(challenge)
+  ) {
+    return null;
+  }
+  return { bindingId, challenge };
 }
 
 export function channelCursorKey(channelId: string): string {

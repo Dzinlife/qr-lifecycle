@@ -1,48 +1,35 @@
-# QR Lifecycle
+# Fallinlife QR Lifecycle
 
-Working name for an open-source QR-code lifecycle manager for expiring group
-invites, including WeChat and Xiaohongshu group QR codes.
+An open-source, mobile-first lifecycle manager for expiring community QR codes,
+including WeChat, Xiaohongshu, and Discord invites.
 
-The product has two distributions with feature parity:
+The supported product is one official hosted service. There is no registration,
+email login, workspace selector, enterprise edition, or supported community
+deployment. The source remains MIT licensed, while the product experience stays
+focused on a phone app and the official website.
 
-- Self-hosted: deploy the Cloudflare backend and use the official mobile app.
-- Managed: subscribe in the mobile app and use the hosted service.
+## Product flow
 
-The paid plan sells hosting and maintenance, not locked product features.
+1. Save a community QR image on the phone.
+2. Fallinlife detects the QR, name, platform, and expiration locally with
+   PhotoKit and Vision. Images are never sent to a cloud image-analysis model.
+3. Confident results create or update a channel automatically; uncertain results
+   enter a one-tap inbox.
+4. The stable public `/q/:slug` URL follows the latest accepted QR version.
+5. To view channels on the website, scan its one-time QR with the app and confirm.
+   The browser receives an HttpOnly cookie and can be revoked from the phone.
 
 ## Repository
 
-- `apps/api`: Cloudflare Worker API, scheduled reminders, D1 and R2.
-- `apps/web`: tenant-aware status, correction, pairing, and operations UI.
-- `apps/mobile`: automation-first Expo/React Native app with native photo-library
-  QR and OCR scanning.
-- `packages/contracts`: shared schemas and API types.
-- `docs`: architecture and protocol decisions.
-
-## Status
-
-The mobile-first V2 vertical slice is implemented:
-
-- Cloudflare Worker API with tenant-isolated D1 state, R2 images, Cron reminders,
-  and direct APNs provider requests.
-- Responsive React status UI, self-host bootstrap/recovery, auxiliary channel
-  correction, QR history, pairing, and stable public QR pages. The web app does
-  not scan or upload group-code images.
-- Expo SDK 57 mobile app with local iOS PhotoKit + Vision QR/OCR discovery,
-  confidence-based channel creation and matching, an exception inbox, APNs
-  registration, deep links, and reversible automatic activation.
-- Android-compatible application boundaries; the MediaStore + ML Kit scanner is
-  explicitly deferred rather than silently falling back.
-
-The staging Worker and web app are live at
-<https://qr-lifecycle-staging.fallinlife.com>. It is intentionally separate
-from production. Physical-iPhone signing and App Store delivery are the next
-milestone.
+- `apps/api`: official Cloudflare Worker, D1, R2, Cron, APNs, and static assets.
+- `apps/web`: scan-to-bind channel status and auxiliary metadata correction.
+- `apps/mobile`: Expo/React Native UI plus native iOS PhotoKit/Vision analysis.
+- `packages/contracts`: shared validation schemas and API types.
+- `docs`: architecture, protocol, and release decisions.
 
 ## Development
 
-Requirements: Node.js 22+, pnpm 10.28.1, and Xcode for the iOS development
-client.
+Requirements: Node.js 22+, pnpm 10.28.1, and Xcode for iOS builds.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -51,7 +38,7 @@ pnpm test
 pnpm build
 ```
 
-Run the local API, web UI, and mobile Metro server in separate terminals:
+Run local services in separate terminals:
 
 ```sh
 pnpm dev:api
@@ -59,26 +46,9 @@ pnpm dev:web
 pnpm dev:mobile
 ```
 
-Expo Go is not supported because QR/OCR discovery uses a local native module. See
-`apps/mobile/README.md` for development-build instructions.
+Expo Go is unsupported because the app uses local native QR/OCR and StoreKit
+identity modules. See `apps/mobile/README.md` for native development details.
 
-## Self-hosting on Cloudflare
-
-1. Create a D1 database and R2 bucket.
-2. Copy their names and the D1 database ID into an environment in
-   `apps/api/wrangler.jsonc`.
-3. Build the web assets, apply migrations, and deploy the Worker:
-
-```sh
-pnpm --filter @qr-lifecycle/web build
-pnpm --filter @qr-lifecycle/api exec wrangler d1 migrations apply <database> --remote
-pnpm --filter @qr-lifecycle/api exec wrangler deploy
-```
-
-4. Open the deployed URL, create the first owner, and save the one-time recovery
-   code in a password manager.
-5. Configure `APNS_KEY_ID`, `APNS_TEAM_ID`, and `APNS_TOPIC`, then store the
-   private key with `wrangler secret put APNS_PRIVATE_KEY`. Never commit it.
-
-See `docs/architecture.md`, `docs/api.md`, and `SECURITY.md` before exposing a
-deployment publicly.
+The staging service is <https://qr-lifecycle-staging.fallinlife.com>. Staging
+accepts a development-installation identity for Ad Hoc testing. Production must
+verify Apple `AppTransaction` and must never enable that fallback.

@@ -14,7 +14,8 @@ Keep changes within one application boundary when possible. Changes to
 affected clients.
 
 Cloudflare configuration uses `wrangler.jsonc`. Never commit `.dev.vars`,
-deployment tokens, device tokens, or managed-service APNs credentials.
+deployment tokens, device tokens, Apple identity JWS values, binding secrets, or
+the official service's APNs credentials.
 
 The generated `ios/` and `android/` projects are intentionally ignored. Native
 mobile behavior belongs in Expo modules under `apps/mobile/modules` so it can

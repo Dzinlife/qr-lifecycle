@@ -15,6 +15,9 @@ export default defineConfig({
           TEST_MIGRATIONS: await readD1Migrations(
             join(import.meta.dirname, "migrations"),
           ),
+          ALLOW_DEVELOPMENT_IDENTITY: "true",
+          APPLE_IDENTITY_ENVIRONMENTS: "Sandbox",
+          APNS_ENVIRONMENT: "sandbox",
         },
       },
     })),

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Check,
-  CirclePlus,
   Clock3,
   Copy,
   Disc3,
@@ -64,11 +63,6 @@ export function DashboardPage() {
         eyebrow="社群入口"
         title="频道状态"
         description="群码由手机 App 从相册自动发现；这里用于查看状态、复制入口和纠错。"
-        action={
-          <Link className="button button--secondary" to="/channels/new">
-            <CirclePlus size={17} /> 手动创建
-          </Link>
-        }
       />
 
       {channels && channels.length > 0 ? (
@@ -93,8 +87,7 @@ export function DashboardPage() {
       {channels?.length === 0 ? (
         <EmptyState
           title="从手机自动发现第一个群码"
-          description="连接手机后保存微信群、小红书群或 Discord 二维码，App 会自动识别、创建频道并生成稳定入口。"
-          action={<Link className="button button--primary" to="/pairing"><CirclePlus size={17} /> 连接手机</Link>}
+          description="在手机中保存微信群、小红书群或 Discord 二维码，再打开 Fallinlife。App 会自动识别、创建频道并生成稳定入口。"
         />
       ) : null}
 

@@ -9,7 +9,7 @@ export interface ReminderPushProvider {
 }
 
 interface DueReminderRow {
-  tenant_id: string;
+  account_id: string;
   channel_id: string;
   channel_name: string;
   expires_at: string;
@@ -40,7 +40,7 @@ export async function sendDueReminders(
 
   const rows = await env.DB.prepare(
     `SELECT
-       c.tenant_id,
+       c.account_id,
        c.id AS channel_id,
        c.name AS channel_name,
        c.expires_at,
@@ -51,11 +51,11 @@ export async function sendDueReminders(
         COALESCE(c.active_qr_version_id, 'none')) AS reminder_key
      FROM channels c
      JOIN devices d
-       ON d.tenant_id = c.tenant_id
+       ON d.account_id = c.account_id
       AND d.notifications_enabled = 1
       AND d.apns_environment = ?
      LEFT JOIN reminder_deliveries rd
-       ON rd.tenant_id = c.tenant_id
+       ON rd.account_id = c.account_id
       AND rd.channel_id = c.id
       AND rd.device_id = d.id
       AND rd.reminder_key = (
@@ -81,12 +81,12 @@ export async function sendDueReminders(
     const createdAt = new Date().toISOString();
     const inserted = await env.DB.prepare(
       `INSERT OR IGNORE INTO reminder_deliveries (
-         id, tenant_id, channel_id, device_id, reminder_key, status, created_at
+         id, account_id, channel_id, device_id, reminder_key, status, created_at
        ) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
     )
       .bind(
         deliveryId,
-        row.tenant_id,
+        row.account_id,
         row.channel_id,
         row.device_id,
         row.reminder_key,
@@ -119,7 +119,7 @@ export async function sendDueReminders(
       await env.DB.prepare(
         `UPDATE reminder_deliveries
          SET status = ?, apns_id = ?, status_code = ?, response_reason = ?, sent_at = ?
-         WHERE id = ? AND tenant_id = ? AND channel_id = ? AND device_id = ?`,
+         WHERE id = ? AND account_id = ? AND channel_id = ? AND device_id = ?`,
       )
         .bind(
           status,
@@ -128,7 +128,7 @@ export async function sendDueReminders(
           result.reason,
           new Date().toISOString(),
           deliveryId,
-          row.tenant_id,
+          row.account_id,
           row.channel_id,
           row.device_id,
         )
@@ -141,13 +141,13 @@ export async function sendDueReminders(
       await env.DB.prepare(
         `UPDATE reminder_deliveries
          SET status = 'failed', response_reason = ?, sent_at = ?
-         WHERE id = ? AND tenant_id = ? AND channel_id = ? AND device_id = ?`,
+         WHERE id = ? AND account_id = ? AND channel_id = ? AND device_id = ?`,
       )
         .bind(
           reason.slice(0, 500),
           new Date().toISOString(),
           deliveryId,
-          row.tenant_id,
+          row.account_id,
           row.channel_id,
           row.device_id,
         )

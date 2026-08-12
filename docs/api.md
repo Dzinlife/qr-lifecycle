@@ -1,92 +1,69 @@
 # API v1
 
-Base path: `/api/v1`. JSON errors use:
+Base path: `/api/v1`. Errors use:
 
 ```json
 { "error": { "code": "machine_code", "message": "Human-readable message" } }
 ```
 
-Authenticated requests send `Authorization: Bearer <token>`. Tokens are scoped
-to a tenant and stored only as hashes in D1.
+Mobile requests use `Authorization: Bearer <token>`. Website sessions use only an
+HttpOnly cookie; unsafe website requests require exact same origin.
 
-## Deployment
+## Mobile identity
 
-- `GET /health`
-- `POST /bootstrap` creates the first owner in a new self-hosted deployment.
-- `POST /auth/request-code` requests an email sign-in code in managed mode.
-- `POST /auth/verify-code` exchanges a sign-in code for a session.
-- `GET /me` returns the current user, tenant and deployment capabilities.
+- `POST /mobile/bootstrap` verifies `appTransactionJws` in production and returns
+  the hidden account, stable device, mobile session token, and official origin.
+- `POST /devices` registers APNs for the authenticated device.
+- `DELETE /devices/:deviceId` disconnects only that same device.
 
-## Channels
+`installationId` is always required as the stable device key. It is accepted as
+the account identity only when the deployment explicitly enables the staging
+development fallback.
+
+## Website binding
+
+- `POST /web-bindings` returns `{ binding, browserSecret }`.
+- `GET /web-bindings/:id` reads status using `X-Binding-Secret`.
+- `POST /web-bindings/:id/approve` requires mobile bearer plus the QR challenge.
+- `POST /web-bindings/:id/consume` uses `X-Binding-Secret` and sets the web cookie.
+- `GET /me` returns the hidden account and current session metadata.
+- `POST /web/logout` revokes the current cookie.
+- `GET /web-sessions` and `DELETE /web-sessions/:id` require mobile bearer.
+
+Bindings expire after two minutes and can be consumed once.
+
+## Channels and QR versions
 
 - `GET /channels`
-- `POST /channels`
+- `POST /channels` (mobile only; normal creation occurs through detections)
 - `GET /channels/:channelId`
 - `PATCH /channels/:channelId`
 - `DELETE /channels/:channelId`
-- `POST /channels/:channelId/qr-versions` uploads and activates an image.
 - `GET /channels/:channelId/qr-versions`
+- `POST /channels/:channelId/qr-versions` (mobile multipart only)
 
-Supported platform values are `wechat_group`, `xiaohongshu_group`, `discord`,
-and `other`. `expiresAt` is an ISO-8601 instant. `remindBeforeMinutes` defaults
-to 1440.
-
-QR upload uses `multipart/form-data`:
-
-- `image`: PNG, JPEG, or HEIC; maximum 10 MiB.
-- `decodedPayload`: locally decoded QR string.
-- `sourceAssetId`: optional opaque photo-library identifier.
-- `capturedAt`: optional ISO-8601 instant.
-
-Idempotency is the SHA-256 hash of `tenantId + channelId + decodedPayload`.
-
-Direct channel upload remains a compatibility and manual-operations endpoint.
-The product's normal mobile flow uses detections below.
+The upload contains `image`, locally decoded `decodedPayload`, optional
+`sourceAssetId`, and optional `capturedAt`. PNG, JPEG, and HEIC are accepted up to
+10 MiB. Idempotency hashes `accountId + decodedPayload` inside a channel.
 
 ## Mobile discovery and review
 
-- `POST /detections/commit` submits one phone-recognized QR candidate.
-- `GET /inbox` lists ambiguous detections requiring confirmation.
-- `POST /inbox/:detectionId/accept` creates a channel or assigns the detection
-  to an existing channel.
-- `POST /inbox/:detectionId/ignore` dismisses a detection and removes its
-  uncommitted image.
-- `POST /detections/:detectionId/undo` reverses an automatic create or update.
+- `POST /detections/commit` submits structured local OCR/QR metadata plus the one
+  candidate image.
+- `GET /inbox`
+- `POST /inbox/:detectionId/accept`
+- `POST /inbox/:detectionId/ignore`
+- `POST /detections/:detectionId/undo`
 
-Detection commit uses `multipart/form-data`:
-
-- `metadata`: JSON produced by local QR/OCR analysis. It contains a stable
-  `clientDetectionId`, asset/timestamp fields, decoded QR payload, recognized
-  text lines, inferred platform/name/expiration, per-field confidence, and an
-  optional tenant-local channel suggestion.
-- `image`: only the image containing the recognized QR; maximum 10 MiB.
-
-The Worker does not perform image recognition. It validates the structured
-metadata, rechecks tenant ownership and channel matching, stores accepted or
-pending images in R2, and persists only the decoded-payload hash. A commit is
-idempotent on `(tenantId, clientDetectionId)`.
-
-High-confidence new channels require at least `0.90` identity confidence.
-Automatic replacement requires at least `0.95` channel-match confidence.
-Everything else enters the inbox. Duplicate payloads are recorded but do not
-create a new QR version. Automatic actions preserve prior channel state so they
-can be undone; an automatically created channel is disabled rather than deleted.
-
-## Mobile pairing and devices
-
-- `POST /pairing-codes` creates a ten-minute one-time pairing code.
-- `POST /pair` exchanges a code for a mobile session and deployment metadata.
-- `POST /devices` upserts an APNs token for the current mobile session.
-- `DELETE /devices/:deviceId` unregisters the device.
-
-Pairing responses include the canonical API origin so the app can support any
-self-hosted deployment without maintaining a central directory.
+The Worker does not recognize images. It validates metadata, rechecks account-local
+matching, and is idempotent on `(accountId, clientDetectionId)`. New-channel
+automation requires at least 0.90 identity confidence; replacement requires at
+least 0.95 match confidence. Duplicate payloads do not create new QR versions.
 
 ## Public live code
 
-- `GET /q/:slug` serves an HTML page with the current QR image and refresh
-  metadata.
-- `GET /q/:slug/image` streams the active R2 object with ETag and cache headers.
+- `GET /q/:slug`
+- `GET /q/:slug/image`
 
-Unknown, disabled, or empty channels return a branded unavailable page rather
-than leaking tenant state.
+Unknown, disabled, or empty channels return a branded unavailable page without
+exposing private account state.

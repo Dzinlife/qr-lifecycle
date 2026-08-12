@@ -4,16 +4,20 @@ import type { DeploymentInfo, ScanCursor } from "@qr-lifecycle/contracts";
 
 import { clearPendingDetections } from "@/scanner/pending-detections";
 
-const SESSION_KEY = "qr-lifecycle.mobile-session.v1";
+const SESSION_KEY = "fallinlife.mobile-session.v2";
+const LEGACY_SESSION_KEY = "qr-lifecycle.mobile-session.v1";
+const INSTALLATION_KEY = "fallinlife.installation-id.v1";
 const SCAN_CURSOR_KEY = "qr-lifecycle.photo-cursor.global.v2";
 
 export interface MobileSession {
   token: string;
+  accountId: string;
+  deviceId: string;
   deployment: DeploymentInfo;
-  deviceId?: string;
 }
 
 export async function loadSession(): Promise<MobileSession | null> {
+  await SecureStore.deleteItemAsync(LEGACY_SESSION_KEY);
   const value = await SecureStore.getItemAsync(SESSION_KEY);
   if (!value) return null;
 
@@ -21,6 +25,8 @@ export async function loadSession(): Promise<MobileSession | null> {
     const parsed = JSON.parse(value) as Partial<MobileSession>;
     if (
       typeof parsed.token !== "string" ||
+      typeof parsed.accountId !== "string" ||
+      typeof parsed.deviceId !== "string" ||
       !parsed.deployment ||
       typeof parsed.deployment.apiOrigin !== "string"
     ) {
@@ -32,6 +38,16 @@ export async function loadSession(): Promise<MobileSession | null> {
     await SecureStore.deleteItemAsync(SESSION_KEY);
     return null;
   }
+}
+
+export async function getOrCreateInstallationId(): Promise<string> {
+  const existing = await SecureStore.getItemAsync(INSTALLATION_KEY);
+  if (existing && /^[A-Za-z0-9_-]{43,128}$/u.test(existing)) return existing;
+  const generated = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
+  await SecureStore.setItemAsync(INSTALLATION_KEY, generated, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  return generated;
 }
 
 export async function saveSession(session: MobileSession): Promise<void> {

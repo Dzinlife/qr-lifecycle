@@ -431,7 +431,7 @@ export default function DiscoverScreen() {
     return () => subscription.remove();
   }, [runScan, session]);
 
-  if (hydrated && !session) return <Redirect href="/pair" />;
+  if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
 
   const pickImage = async () => {

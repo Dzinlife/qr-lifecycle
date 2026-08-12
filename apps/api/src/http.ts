@@ -43,42 +43,6 @@ export async function readJson(request: Request): Promise<unknown> {
   }
 }
 
-function allowedOrigin(request: Request, env: Env): string | null {
-  const origin = request.headers.get("origin");
-  if (!origin) return null;
-  const configured: unknown = Reflect.get(env, "CORS_ORIGINS");
-  const origins = typeof configured === "string" ? configured : "";
-  if (origins === "*") return "*";
-  const allowed = origins.split(",").map((value: string) => value.trim());
-  return allowed.includes(origin) ? origin : null;
-}
-
-export function withCors(response: Response, request: Request, env: Env): Response {
-  const origin = allowedOrigin(request, env);
-  if (!origin) return response;
-  const result = new Response(response.body, response);
-  result.headers.set("access-control-allow-origin", origin);
-  result.headers.set("vary", "Origin");
-  return result;
-}
-
-export function corsPreflight(request: Request, env: Env): Response {
-  const origin = allowedOrigin(request, env);
-  if (!origin) {
-    return new Response(null, { status: 403 });
-  }
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "access-control-allow-origin": origin,
-      "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
-      "access-control-allow-headers": "Authorization,Content-Type",
-      "access-control-max-age": "86400",
-      vary: "Origin",
-    },
-  });
-}
-
 export function noContent(): Response {
   return new Response(null, { status: 204 });
 }

@@ -74,7 +74,7 @@ export default function ChannelDetailScreen() {
     void load();
   }, [load]);
 
-  if (hydrated && !session) return <Redirect href="/pair" />;
+  if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
   if (!channelId) return <Screen><Notice tone="danger">频道链接无效。</Notice></Screen>;
   if (loading) return <Loading label="正在读取群码…" />;

@@ -59,7 +59,7 @@ export default function ChannelsScreen() {
     void load();
   }, [load]);
 
-  if (hydrated && !session) return <Redirect href="/pair" />;
+  if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
 
   return (

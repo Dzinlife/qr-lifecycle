@@ -1,49 +1,42 @@
 # Mobile app
 
-Expo SDK 57 development-build app for pairing with either a self-hosted or
-managed QR Lifecycle deployment. Expo Go is not supported because local photo
-QR/OCR recognition uses the `photo-qr-scanner` native module.
+Expo SDK 57 development-build app for the official Fallinlife service. Expo Go is
+unsupported because local PhotoKit/Vision recognition and StoreKit identity use
+native modules.
 
 ## Local development
-
-From the repository root, install the workspace dependencies, then run:
 
 ```sh
 pnpm --filter @qr-lifecycle/mobile native:generate
 pnpm --filter @qr-lifecycle/mobile ios
 ```
 
-`native:generate` generates `ios/` and `android/` locally; neither directory is
-committed. Native module changes require rebuilding the development client.
+Generated `ios/` and `android/` directories are ignored. Native module changes
+require rebuilding the development client. Bundle ID and APNs topic are
+`com.fallinlife.qrlifecycle`.
 
-The provisional App ID is `com.fallinlife.qrlifecycle`. The backend APNs topic
-and the signed app's Bundle ID must stay identical if that identifier changes.
+## Identity and website access
 
-## Photo scanning behavior
+Production calls `AppTransaction.shared` and sends only Apple's signed JWS for
+server verification. Ad Hoc builds do not reliably have an App Store transaction,
+so staging explicitly accepts the device's stable installation identity; production
+must refuse it.
 
-- iOS requests PhotoKit read/write access and accepts full or limited access.
-- A fast Vision barcode-only pass runs on PhotoKit thumbnails. Only images that
-  contain a QR code are loaded at a larger size for Simplified Chinese/English
-  OCR. Deterministic TypeScript adapters infer platform, group name,
-  explicit/relative expiration, and confidence without a cloud model.
-- The first scan inspects at most the newest 20 accessible photos. Subsequent
-  scans use one deployment-wide creation-time cursor and same-timestamp asset
-  IDs, in batches of at most 100. Opening or returning to the app triggers an
-  incremental scan, reports progress, and can be stopped.
-- High-confidence results create or update a channel automatically with undo.
-  Ambiguous results enter the discovery inbox for one-tap confirmation.
-- Selecting one image runs the same native recognition pipeline; the operator
-  never has to paste a decoded QR payload.
-- Recognized candidates are copied into a persistent on-device outbox before
-  the photo cursor advances. Upload errors therefore retry the outbox instead
-  of repeating QR detection and OCR over the same photo batch.
-- Android deliberately reports `unsupported` until the MediaStore + ML Kit
-  implementation is added. It never pretends to have automatic recognition.
+The app scans the official website's `qrlifecycle://web-bind` QR with Expo Camera,
+shows an explicit confirmation, and can enumerate/revoke authorized browsers.
 
-Only recognized candidate images and structured device-produced metadata are
-sent to the paired deployment for stable QR serving. There is no cloud or
-server-side image-analysis path.
+## Photo scanning
 
-APNs registration only sends a real native device token. Simulators, denied
-permission, missing push entitlements, Expo Go, and registration failures are
-shown as recoverable states; no synthetic token is stored or uploaded.
+- A fast barcode pass runs on new PhotoKit assets; accurate Chinese/English OCR
+  runs only for QR hits.
+- Deterministic adapters infer platform, name, explicit/relative expiration, and
+  confidence without a cloud model.
+- Foreground scans are incremental, report progress, and can be cancelled.
+- Candidate images enter a persistent outbox before the cursor advances, so network
+  retries never require re-running OCR.
+- Confident results create/update automatically; ambiguous results enter the mobile
+  inbox for one-tap confirmation.
+- Android deliberately reports unsupported until MediaStore + ML Kit is implemented.
+
+Only QR-bearing candidate images and structured local metadata reach the official
+service. APNs registration only sends a real native device token.

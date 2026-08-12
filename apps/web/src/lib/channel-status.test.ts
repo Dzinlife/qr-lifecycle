@@ -4,7 +4,7 @@ import { getChannelStatus } from "./channel-status";
 
 const baseChannel: Channel = {
   id: "11111111-1111-4111-8111-111111111111",
-  tenantId: "22222222-2222-4222-8222-222222222222",
+  accountId: "22222222-2222-4222-8222-222222222222",
   name: "产品交流群",
   platform: "wechat_group",
   slug: "product-group",

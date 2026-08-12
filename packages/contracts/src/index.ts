@@ -9,7 +9,7 @@ export const channelPlatformSchema = z.enum([
 
 export const channelSchema = z.object({
   id: z.string().uuid(),
-  tenantId: z.string().uuid(),
+  accountId: z.string().uuid(),
   name: z.string().min(1).max(120),
   platform: channelPlatformSchema,
   slug: z.string().min(3).max(64),
@@ -37,7 +37,7 @@ export const updateChannelSchema = createChannelSchema.partial();
 
 export const qrVersionSchema = z.object({
   id: z.string().uuid(),
-  tenantId: z.string().uuid(),
+  accountId: z.string().uuid(),
   channelId: z.string().uuid(),
   decodedPayloadHash: z.string(),
   sourceAssetId: z.string().nullable(),
@@ -47,10 +47,37 @@ export const qrVersionSchema = z.object({
 });
 
 export const deploymentInfoSchema = z.object({
-  mode: z.enum(["self_hosted", "managed"]),
   apiOrigin: z.string().url(),
   productName: z.string(),
-  registrationEnabled: z.boolean(),
+});
+
+export const accountSchema = z.object({
+  id: z.string().uuid(),
+  createdAt: z.string().datetime(),
+});
+
+export const mobileBootstrapResponseSchema = z.object({
+  sessionToken: z.string().min(32),
+  account: accountSchema,
+  device: z.object({ id: z.string().uuid() }),
+  deployment: deploymentInfoSchema,
+});
+
+export const webBindingSchema = z.object({
+  id: z.string().uuid(),
+  challenge: z.string().min(32),
+  qrValue: z.string().min(1),
+  expiresAt: z.string().datetime(),
+});
+
+export const webBindingStatusSchema = z.enum(["pending", "approved", "expired"]);
+
+export const webSessionSchema = z.object({
+  id: z.string().uuid(),
+  userAgent: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  lastUsedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
 });
 
 export const apiErrorSchema = z.object({
@@ -66,6 +93,11 @@ export type CreateChannelInput = z.infer<typeof createChannelSchema>;
 export type UpdateChannelInput = z.infer<typeof updateChannelSchema>;
 export type QrVersion = z.infer<typeof qrVersionSchema>;
 export type DeploymentInfo = z.infer<typeof deploymentInfoSchema>;
+export type Account = z.infer<typeof accountSchema>;
+export type MobileBootstrapResponse = z.infer<typeof mobileBootstrapResponseSchema>;
+export type WebBinding = z.infer<typeof webBindingSchema>;
+export type WebBindingStatus = z.infer<typeof webBindingStatusSchema>;
+export type WebSession = z.infer<typeof webSessionSchema>;
 
 export interface PhotoPermission {
   status: "granted" | "limited" | "denied";
@@ -164,7 +196,7 @@ export const detectionActionSchema = z.enum([
 
 export const detectionSchema = z.object({
   id: z.string().uuid(),
-  tenantId: z.string().uuid(),
+  accountId: z.string().uuid(),
   clientDetectionId: z.string().uuid(),
   assetId: z.string(),
   capturedAt: z.string().datetime().nullable(),

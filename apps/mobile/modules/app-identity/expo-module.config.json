@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "apple": {
+    "modules": ["AppIdentityModule"]
+  },
+  "android": {
+    "modules": ["com.fallinlife.qrlifecycle.appidentity.AppIdentityModule"]
+  }
+}

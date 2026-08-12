@@ -5,22 +5,25 @@ import {
   type UpdateChannelInput,
 } from "@qr-lifecycle/contracts";
 
-import { authenticate, newSession, type AuthContext } from "./auth";
 import {
-  randomPairingCode,
-  randomToken,
-  sha256,
-  timingSafeEqualBytes,
-} from "./crypto";
+  authenticate,
+  clearedWebSessionCookie,
+  MOBILE_SESSION_SECONDS,
+  newSession,
+  touchSession,
+  type AuthContext,
+  WEB_SESSION_SECONDS,
+  webSessionCookie,
+} from "./auth";
+import { verifyMobileIdentity } from "./apple-identity";
+import { randomToken, sha256 } from "./crypto";
 import {
   apiError,
-  corsPreflight,
   escapeHtml,
   HttpError,
   json,
   noContent,
   readJson,
-  withCors,
 } from "./http";
 import {
   acceptInboxItem,
@@ -35,7 +38,6 @@ import {
   qrVersionFromRow,
   type ChannelRow,
   type DeviceRow,
-  type PairingRow,
   type QrVersionRow,
 } from "./models";
 import { sendDueReminders } from "./reminders";
@@ -45,31 +47,39 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/heic", "image/heif"]);
 
-interface BootstrapInput {
-  email: string;
-  displayName: string;
-  tenantName: string;
-}
-
 interface DeviceInput {
   apnsToken: string;
   environment: "production" | "sandbox";
   notificationsEnabled: boolean;
 }
 
-interface RecoveryOwnerRow {
-  tenant_id: string;
-  tenant_name: string;
-  tenant_slug: string;
-  recovery_code_hash: string;
-  user_id: string;
-  email: string;
-  display_name: string;
+interface AccountIdentityRow {
+  account_id: string;
+  account_created_at: string;
+}
+
+interface MobileBootstrapInput {
+  appTransactionJws?: string;
+  installationId: string;
+  deviceName: string;
+}
+
+interface WebBindingRow {
+  id: string;
+  browser_secret_hash: string;
+  challenge_hash: string;
+  account_id: string | null;
+  approved_by_device_id: string | null;
+  requested_user_agent: string | null;
+  expires_at: string;
+  approved_at: string | null;
+  consumed_at: string | null;
+  created_at: string;
 }
 
 interface PublicChannelRow {
   id: string;
-  tenant_id: string;
+  account_id: string;
   name: string;
   slug: string;
   expires_at: string | null;
@@ -100,20 +110,25 @@ function optionalTrimmedString(
   return result;
 }
 
-function parseBootstrapInput(value: unknown): BootstrapInput {
-  const body = record(value);
-  const email = optionalTrimmedString(
-    body.email ?? body.ownerEmail,
-    "owner@local.invalid",
-    320,
-  ).toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
-    throw new HttpError(400, "invalid_email", "Email address is not valid");
+function optionalBodyString(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+    throw new HttpError(400, "invalid_input", "Expected a bounded string");
   }
+  return value;
+}
+
+function parseMobileBootstrapInput(value: unknown): MobileBootstrapInput {
+  const body = record(value);
+  const installationId = optionalBodyString(body.installationId, 128) ?? "";
+  if (!/^[A-Za-z0-9_-]{43,128}$/u.test(installationId)) {
+    throw new HttpError(400, "invalid_installation_identity", "Installation identity is invalid");
+  }
+  const appTransactionJws = optionalBodyString(body.appTransactionJws, 65_536);
   return {
-    email,
-    displayName: optionalTrimmedString(body.displayName, "Owner", 120),
-    tenantName: optionalTrimmedString(body.tenantName, "My workspace", 120),
+    installationId,
+    ...(appTransactionJws ? { appTransactionJws } : {}),
+    deviceName: optionalTrimmedString(body.deviceName, "iPhone", 120),
   };
 }
 
@@ -144,181 +159,138 @@ function parseDeviceInput(value: unknown, env: Env): DeviceInput {
 }
 
 function deployment(request: Request, env: Env): {
-  mode: "self_hosted" | "managed";
   apiOrigin: string;
   productName: string;
-  registrationEnabled: boolean;
 } {
   return {
-    mode: env.DEPLOYMENT_MODE,
     apiOrigin: new URL(request.url).origin,
     productName: env.PRODUCT_NAME,
-    registrationEnabled: env.REGISTRATION_ENABLED,
   };
 }
 
-function userAndTenant(auth: AuthContext): {
-  user: { id: string; email: string; displayName: string };
-  tenant: { id: string; name: string; slug: string };
-  membership: { role: "owner" | "member" };
-} {
-  return {
-    user: { id: auth.userId, email: auth.email, displayName: auth.displayName },
-    tenant: { id: auth.tenantId, name: auth.tenantName, slug: auth.tenantSlug },
-    membership: { role: auth.role },
-  };
+function requestUserAgent(request: Request): string | null {
+  const value = request.headers.get("user-agent")?.trim();
+  return value ? value.slice(0, 512) : null;
 }
 
 async function health(request: Request, env: Env): Promise<Response> {
-  const initialized = await env.DB.prepare(
-    "SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1",
-  ).first<{ id: string }>();
   return json({
     ok: true,
-    bootstrapped: initialized !== null,
     deployment: deployment(request, env),
   });
 }
 
-async function bootstrap(request: Request, env: Env): Promise<Response> {
-  if (env.DEPLOYMENT_MODE !== "self_hosted") {
-    throw new HttpError(404, "not_found", "Bootstrap is not available");
-  }
+async function accountForIdentity(
+  env: Env,
+  identity: Awaited<ReturnType<typeof verifyMobileIdentity>>,
+): Promise<AccountIdentityRow> {
   const existing = await env.DB.prepare(
-    "SELECT id FROM tenants WHERE slug = ? LIMIT 1",
+    `SELECT i.account_id, a.created_at AS account_created_at
+     FROM account_identities i
+     JOIN accounts a ON a.id = i.account_id
+     WHERE i.subject_hash = ? LIMIT 1`,
   )
-    .bind("default")
-    .first<{ id: string }>();
+    .bind(identity.subjectHash)
+    .first<AccountIdentityRow>();
   if (existing) {
-    throw new HttpError(409, "already_bootstrapped", "Deployment is already initialized");
+    await env.DB.prepare(
+      "UPDATE account_identities SET last_verified_at = ? WHERE subject_hash = ?",
+    )
+      .bind(new Date().toISOString(), identity.subjectHash)
+      .run();
+    return existing;
   }
 
-  const input = parseBootstrapInput(await readJson(request));
   const now = new Date().toISOString();
-  const userId = crypto.randomUUID();
-  const tenantId = crypto.randomUUID();
-  const session = await newSession(30 * 24 * 60 * 60);
-  const recoveryCode = randomToken();
-  const recoveryCodeHash = await sha256(recoveryCode);
+  const accountId = crypto.randomUUID();
   try {
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO users (id, email, display_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).bind(userId, input.email, input.displayName, now, now),
+        "INSERT INTO accounts (id, created_at, updated_at) VALUES (?, ?, ?)",
+      ).bind(accountId, now, now),
       env.DB.prepare(
-        `INSERT INTO tenants (
-           id, name, slug, recovery_code_hash, created_at, updated_at
-         ) VALUES (?, ?, 'default', ?, ?, ?)`,
-      ).bind(tenantId, input.tenantName, recoveryCodeHash, now, now),
-      env.DB.prepare(
-        `INSERT INTO memberships (tenant_id, user_id, role, created_at)
-         VALUES (?, ?, 'owner', ?)`,
-      ).bind(tenantId, userId, now),
-      env.DB.prepare(
-        `INSERT INTO sessions (
-           id, tenant_id, user_id, token_hash, kind, expires_at, created_at, last_used_at
-         ) VALUES (?, ?, ?, ?, 'web', ?, ?, ?)`,
+        `INSERT INTO account_identities (
+           id, account_id, provider, subject_hash, environment, created_at, last_verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
-        session.id,
-        tenantId,
-        userId,
-        session.tokenHash,
-        session.expiresAt,
+        crypto.randomUUID(),
+        accountId,
+        identity.provider,
+        identity.subjectHash,
+        identity.environment,
         now,
         now,
       ),
     ]);
+    return { account_id: accountId, account_created_at: now };
   } catch (error) {
-    if (error instanceof Error && error.message.includes("UNIQUE")) {
-      throw new HttpError(409, "already_bootstrapped", "Deployment is already initialized");
-    }
-    throw error;
+    if (!(error instanceof Error) || !error.message.includes("UNIQUE")) throw error;
+    const raced = await env.DB.prepare(
+      `SELECT i.account_id, a.created_at AS account_created_at
+       FROM account_identities i
+       JOIN accounts a ON a.id = i.account_id
+       WHERE i.subject_hash = ? LIMIT 1`,
+    )
+      .bind(identity.subjectHash)
+      .first<AccountIdentityRow>();
+    if (!raced) throw error;
+    return raced;
   }
-
-  return json(
-    {
-      sessionToken: session.token,
-      recoveryCode,
-      user: { id: userId, email: input.email, displayName: input.displayName },
-      tenant: { id: tenantId, name: input.tenantName, slug: "default" },
-      deployment: deployment(request, env),
-    },
-    { status: 201 },
-  );
 }
 
-async function requestAuthCode(request: Request, env: Env): Promise<Response> {
-  if (env.DEPLOYMENT_MODE === "self_hosted") {
-    const body = record(await readJson(request));
-    if (body.email !== undefined && typeof body.email !== "string") {
-      throw new HttpError(400, "invalid_email", "Email address is not valid");
-    }
-    // Deliberately do not reveal whether an owner email exists.
-    return json({ accepted: true, method: "recovery_code" }, { status: 202 });
-  }
-  throw new HttpError(
-    501,
-    "managed_auth_not_configured",
-    "Managed email authentication is not configured",
-  );
-}
-
-async function verifyAuthCode(request: Request, env: Env): Promise<Response> {
-  if (env.DEPLOYMENT_MODE !== "self_hosted") {
-    throw new HttpError(
-      501,
-      "managed_auth_not_configured",
-      "Managed email authentication is not configured",
-    );
-  }
-  const body = record(await readJson(request));
-  const email = optionalTrimmedString(body.email, "", 320).toLowerCase();
-  const recoveryCode = optionalTrimmedString(
-    body.recoveryCode ?? body.code,
-    "",
-    256,
-  );
-  const owner = await env.DB.prepare(
-    `SELECT
-       t.id AS tenant_id,
-       t.name AS tenant_name,
-       t.slug AS tenant_slug,
-       t.recovery_code_hash,
-       u.id AS user_id,
-       u.email,
-       u.display_name
-     FROM tenants t
-     JOIN memberships m ON m.tenant_id = t.id AND m.role = 'owner'
-     JOIN users u ON u.id = m.user_id
-     WHERE u.email = ? COLLATE NOCASE
-       AND t.recovery_code_hash IS NOT NULL
-     ORDER BY t.created_at ASC
-     LIMIT 1`,
-  )
-    .bind(email)
-    .first<RecoveryOwnerRow>();
-  const providedHash = await sha256(recoveryCode);
-  const providedBytes = new TextEncoder().encode(providedHash);
-  const expectedBytes = new TextEncoder().encode(
-    owner?.recovery_code_hash ?? "0".repeat(64),
-  );
-  if (!owner || !timingSafeEqualBytes(providedBytes, expectedBytes)) {
-    throw new HttpError(401, "invalid_code", "Email or recovery code is invalid");
-  }
-
-  const session = await newSession(30 * 24 * 60 * 60);
+async function mobileBootstrap(request: Request, env: Env): Promise<Response> {
+  const input = parseMobileBootstrapInput(await readJson(request));
+  const identity = await verifyMobileIdentity(input, env);
+  const account = await accountForIdentity(env, identity);
+  const deviceKeyHash = await sha256(`device:${input.installationId}`);
   const now = new Date().toISOString();
+  let device = await env.DB.prepare(
+    "SELECT * FROM devices WHERE device_key_hash = ? LIMIT 1",
+  )
+    .bind(deviceKeyHash)
+    .first<DeviceRow>();
+  if (device && device.account_id !== account.account_id) {
+    throw new HttpError(409, "device_identity_conflict", "This installation belongs to another account");
+  }
+  if (!device) {
+    device = await env.DB.prepare(
+      `INSERT INTO devices (
+         id, account_id, device_key_hash, platform, display_name,
+         notifications_enabled, created_at, updated_at
+       ) VALUES (?, ?, ?, 'ios', ?, 0, ?, ?) RETURNING *`,
+    )
+      .bind(
+        crypto.randomUUID(),
+        account.account_id,
+        deviceKeyHash,
+        input.deviceName,
+        now,
+        now,
+      )
+      .first<DeviceRow>();
+  } else {
+    device = await env.DB.prepare(
+      `UPDATE devices SET display_name = ?, updated_at = ?
+       WHERE id = ? AND account_id = ? RETURNING *`,
+    )
+      .bind(input.deviceName, now, device.id, account.account_id)
+      .first<DeviceRow>();
+  }
+  if (!device) throw new Error("Device upsert did not return a record");
+
+  const session = await newSession(MOBILE_SESSION_SECONDS);
   await env.DB.prepare(
     `INSERT INTO sessions (
-       id, tenant_id, user_id, token_hash, kind, expires_at, created_at, last_used_at
-     ) VALUES (?, ?, ?, ?, 'web', ?, ?, ?)`,
+       id, account_id, device_id, token_hash, kind, user_agent,
+       expires_at, created_at, last_used_at
+     ) VALUES (?, ?, ?, ?, 'mobile', ?, ?, ?, ?)`,
   )
     .bind(
       session.id,
-      owner.tenant_id,
-      owner.user_id,
+      account.account_id,
+      device.id,
       session.tokenHash,
+      requestUserAgent(request),
       session.expiresAt,
       now,
       now,
@@ -326,35 +298,228 @@ async function verifyAuthCode(request: Request, env: Env): Promise<Response> {
     .run();
   return json({
     sessionToken: session.token,
-    user: {
-      id: owner.user_id,
-      email: owner.email,
-      displayName: owner.display_name,
+    account: { id: account.account_id, createdAt: account.account_created_at },
+    device: { id: device.id },
+    deployment: deployment(request, env),
+  }, { status: 201 });
+}
+
+async function createWebBinding(request: Request, env: Env): Promise<Response> {
+  const id = crypto.randomUUID();
+  const browserSecret = randomToken();
+  const challenge = randomToken();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 2 * 60 * 1_000).toISOString();
+  await env.DB.prepare(
+    `INSERT INTO web_bindings (
+       id, browser_secret_hash, challenge_hash, requested_user_agent, expires_at, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      id,
+      await sha256(browserSecret),
+      await sha256(challenge),
+      requestUserAgent(request),
+      expiresAt,
+      now.toISOString(),
+    )
+    .run();
+  const qrValue = `qrlifecycle://web-bind?id=${encodeURIComponent(id)}&challenge=${encodeURIComponent(challenge)}`;
+  return json(
+    { binding: { id, challenge, qrValue, expiresAt }, browserSecret },
+    { status: 201, headers: { "cache-control": "no-store" } },
+  );
+}
+
+function bindingSecret(request: Request): string {
+  const value = request.headers.get("x-binding-secret") ?? "";
+  if (!/^[A-Za-z0-9_-]{43,128}$/u.test(value)) {
+    throw new HttpError(401, "invalid_binding_secret", "Binding secret is invalid");
+  }
+  return value;
+}
+
+async function bindingForBrowser(
+  request: Request,
+  env: Env,
+  bindingId: string,
+): Promise<WebBindingRow> {
+  const row = await env.DB.prepare(
+    `SELECT * FROM web_bindings
+     WHERE id = ? AND browser_secret_hash = ? LIMIT 1`,
+  )
+    .bind(bindingId, await sha256(bindingSecret(request)))
+    .first<WebBindingRow>();
+  if (!row) throw new HttpError(404, "binding_not_found", "Binding request was not found");
+  return row;
+}
+
+async function webBindingStatus(
+  request: Request,
+  env: Env,
+  bindingId: string,
+): Promise<Response> {
+  const row = await bindingForBrowser(request, env, bindingId);
+  const expired = row.expires_at <= new Date().toISOString();
+  const status = expired ? "expired" : row.approved_at ? "approved" : "pending";
+  return json({ status, expiresAt: row.expires_at }, { headers: { "cache-control": "no-store" } });
+}
+
+async function approveWebBinding(
+  request: Request,
+  env: Env,
+  bindingId: string,
+): Promise<Response> {
+  const auth = await authenticate(request, env, "mobile");
+  if (!auth.deviceId) throw new HttpError(401, "device_required", "Mobile device is missing");
+  const body = record(await readJson(request));
+  const challenge = optionalBodyString(body.challenge, 128) ?? "";
+  if (!/^[A-Za-z0-9_-]{43,128}$/u.test(challenge)) {
+    throw new HttpError(400, "invalid_binding_challenge", "Binding challenge is invalid");
+  }
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(
+    `UPDATE web_bindings
+     SET account_id = ?, approved_by_device_id = ?, approved_at = ?
+     WHERE id = ? AND challenge_hash = ? AND approved_at IS NULL
+       AND consumed_at IS NULL AND expires_at > ?`,
+  )
+    .bind(
+      auth.accountId,
+      auth.deviceId,
+      now,
+      bindingId,
+      await sha256(challenge),
+      now,
+    )
+    .run();
+  if (result.meta.changes !== 1) {
+    throw new HttpError(410, "binding_expired", "Binding request expired or was already used");
+  }
+  return noContent();
+}
+
+async function consumeWebBinding(
+  request: Request,
+  env: Env,
+  bindingId: string,
+): Promise<Response> {
+  const row = await bindingForBrowser(request, env, bindingId);
+  const now = new Date().toISOString();
+  if (!row.account_id || !row.approved_at || row.consumed_at || row.expires_at <= now) {
+    throw new HttpError(409, "binding_not_approved", "Binding request is not approved");
+  }
+  const session = await newSession(WEB_SESSION_SECONDS);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO sessions (
+         id, account_id, token_hash, kind, user_agent, expires_at, created_at, last_used_at
+       )
+       SELECT ?, account_id, ?, 'web', requested_user_agent, ?, ?, ?
+       FROM web_bindings
+       WHERE id = ? AND browser_secret_hash = ? AND account_id IS NOT NULL
+         AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at > ?`,
+    ).bind(
+      session.id,
+      session.tokenHash,
+      session.expiresAt,
+      now,
+      now,
+      bindingId,
+      row.browser_secret_hash,
+      now,
+    ),
+    env.DB.prepare(
+      `UPDATE web_bindings SET consumed_at = ?
+       WHERE id = ? AND browser_secret_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+    ).bind(now, bindingId, row.browser_secret_hash, now),
+  ]);
+  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
+    throw new HttpError(410, "binding_consumed", "Binding request was already used");
+  }
+  return json(
+    { connected: true },
+    {
+      headers: {
+        "set-cookie": webSessionCookie(request, session.token),
+        "cache-control": "no-store",
+      },
     },
-    tenant: {
-      id: owner.tenant_id,
-      name: owner.tenant_name,
-      slug: owner.tenant_slug,
-    },
+  );
+}
+
+async function me(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const auth = await authenticate(request, env);
+  touchSession(env, ctx, auth);
+  const account = await env.DB.prepare(
+    "SELECT id, created_at FROM accounts WHERE id = ? LIMIT 1",
+  )
+    .bind(auth.accountId)
+    .first<{ id: string; created_at: string }>();
+  if (!account) throw new HttpError(401, "unauthorized", "Account no longer exists");
+  return json({
+    account: { id: account.id, createdAt: account.created_at },
+    session: { id: auth.sessionId, kind: auth.sessionKind },
     deployment: deployment(request, env),
   });
 }
 
-async function me(
+async function logoutWeb(request: Request, env: Env): Promise<Response> {
+  const auth = await authenticate(request, env, "web");
+  await env.DB.prepare(
+    "UPDATE sessions SET revoked_at = ? WHERE id = ? AND account_id = ?",
+  )
+    .bind(new Date().toISOString(), auth.sessionId, auth.accountId)
+    .run();
+  return new Response(null, {
+    status: 204,
+    headers: { "set-cookie": clearedWebSessionCookie(request) },
+  });
+}
+
+async function listWebSessions(request: Request, env: Env): Promise<Response> {
+  const auth = await authenticate(request, env, "mobile");
+  const rows = await env.DB.prepare(
+    `SELECT id, user_agent, created_at, last_used_at, expires_at
+     FROM sessions
+     WHERE account_id = ? AND kind = 'web' AND revoked_at IS NULL AND expires_at > ?
+     ORDER BY last_used_at DESC`,
+  )
+    .bind(auth.accountId, new Date().toISOString())
+    .all<{
+      id: string;
+      user_agent: string | null;
+      created_at: string;
+      last_used_at: string;
+      expires_at: string;
+    }>();
+  return json({
+    sessions: rows.results.map((row) => ({
+      id: row.id,
+      userAgent: row.user_agent,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+      expiresAt: row.expires_at,
+    })),
+  });
+}
+
+async function revokeWebSession(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
+  sessionId: string,
 ): Promise<Response> {
-  const auth = await authenticate(request, env);
-  ctx.waitUntil(
-    env.DB.prepare(
-      "UPDATE sessions SET last_used_at = ? WHERE id = ? AND tenant_id = ?",
-    )
-      .bind(new Date().toISOString(), auth.sessionId, auth.tenantId)
-      .run()
-      .then(() => undefined),
-  );
-  return json({ ...userAndTenant(auth), deployment: deployment(request, env) });
+  const auth = await authenticate(request, env, "mobile");
+  const result = await env.DB.prepare(
+    `UPDATE sessions SET revoked_at = ?
+     WHERE id = ? AND account_id = ? AND kind = 'web' AND revoked_at IS NULL`,
+  )
+    .bind(new Date().toISOString(), sessionId, auth.accountId)
+    .run();
+  if (result.meta.changes !== 1) {
+    throw new HttpError(404, "web_session_not_found", "Browser session was not found");
+  }
+  return noContent();
 }
 
 function invalidSchema(issues: readonly { message: string }[]): never {
@@ -365,23 +530,23 @@ async function listChannels(request: Request, env: Env): Promise<Response> {
   const auth = await authenticate(request, env);
   const result = await env.DB.prepare(
     `SELECT * FROM channels
-     WHERE tenant_id = ?
+     WHERE account_id = ?
      ORDER BY disabled_at IS NOT NULL ASC, updated_at DESC`,
   )
-    .bind(auth.tenantId)
+    .bind(auth.accountId)
     .all<ChannelRow>();
   return json({ channels: result.results.map(channelFromRow) });
 }
 
 async function createChannel(request: Request, env: Env): Promise<Response> {
-  const auth = await authenticate(request, env);
+  const auth = await authenticate(request, env, "mobile");
   const parsed = createChannelSchema.safeParse(await readJson(request));
   if (!parsed.success) invalidSchema(parsed.error.issues);
   const input: CreateChannelInput = parsed.data;
   const now = new Date().toISOString();
   const row: ChannelRow = {
     id: crypto.randomUUID(),
-    tenant_id: auth.tenantId,
+    account_id: auth.accountId,
     name: input.name,
     platform: input.platform,
     slug: input.slug,
@@ -395,13 +560,13 @@ async function createChannel(request: Request, env: Env): Promise<Response> {
   try {
     await env.DB.prepare(
       `INSERT INTO channels (
-         id, tenant_id, name, platform, slug, expires_at,
+         id, account_id, name, platform, slug, expires_at,
          remind_before_minutes, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         row.id,
-        row.tenant_id,
+        row.account_id,
         row.name,
         row.platform,
         row.slug,
@@ -427,9 +592,9 @@ async function channelById(
 ): Promise<{ auth: AuthContext; row: ChannelRow }> {
   const auth = await authenticate(request, env);
   const row = await env.DB.prepare(
-    "SELECT * FROM channels WHERE id = ? AND tenant_id = ? LIMIT 1",
+    "SELECT * FROM channels WHERE id = ? AND account_id = ? LIMIT 1",
   )
-    .bind(channelId, auth.tenantId)
+    .bind(channelId, auth.accountId)
     .first<ChannelRow>();
   if (!row) throw new HttpError(404, "channel_not_found", "Channel was not found");
   return { auth, row };
@@ -479,11 +644,11 @@ async function updateChannel(
     throw new HttpError(400, "empty_update", "At least one field must be updated");
   }
   assignments.push("updated_at = ?");
-  values.push(new Date().toISOString(), channelId, auth.tenantId);
+  values.push(new Date().toISOString(), channelId, auth.accountId);
   try {
     await env.DB.prepare(
       `UPDATE channels SET ${assignments.join(", ")}
-       WHERE id = ? AND tenant_id = ?`,
+       WHERE id = ? AND account_id = ?`,
     )
       .bind(...values)
       .run();
@@ -494,9 +659,9 @@ async function updateChannel(
     throw error;
   }
   const updated = await env.DB.prepare(
-    "SELECT * FROM channels WHERE id = ? AND tenant_id = ? LIMIT 1",
+    "SELECT * FROM channels WHERE id = ? AND account_id = ? LIMIT 1",
   )
-    .bind(channelId, auth.tenantId)
+    .bind(channelId, auth.accountId)
     .first<ChannelRow>();
   if (!updated) throw new HttpError(404, "channel_not_found", "Channel was not found");
   return json({ channel: channelFromRow(updated) });
@@ -511,9 +676,9 @@ async function deleteChannel(
   const now = new Date().toISOString();
   const result = await env.DB.prepare(
     `UPDATE channels SET disabled_at = ?, updated_at = ?
-     WHERE id = ? AND tenant_id = ? AND disabled_at IS NULL`,
+     WHERE id = ? AND account_id = ? AND disabled_at IS NULL`,
   )
-    .bind(now, now, channelId, auth.tenantId)
+    .bind(now, now, channelId, auth.accountId)
     .run();
   if (result.meta.changes !== 1) {
     throw new HttpError(404, "channel_not_found", "Channel was not found");
@@ -528,13 +693,13 @@ async function listQrVersions(
 ): Promise<Response> {
   const { auth } = await channelById(request, env, channelId);
   const result = await env.DB.prepare(
-    `SELECT id, tenant_id, channel_id, decoded_payload_hash, source_asset_id,
+    `SELECT id, account_id, channel_id, decoded_payload_hash, source_asset_id,
             captured_at, activated_at, created_at
      FROM qr_versions
-     WHERE channel_id = ? AND tenant_id = ?
+     WHERE channel_id = ? AND account_id = ?
      ORDER BY created_at DESC`,
   )
-    .bind(channelId, auth.tenantId)
+    .bind(channelId, auth.accountId)
     .all<QrVersionRow>();
   return json({ qrVersions: result.results.map(qrVersionFromRow) });
 }
@@ -563,6 +728,9 @@ async function uploadQrVersion(
   channelId: string,
 ): Promise<Response> {
   const { auth } = await channelById(request, env, channelId);
+  if (auth.sessionKind !== "mobile") {
+    throw new HttpError(403, "mobile_session_required", "QR images are updated from the mobile app");
+  }
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
     throw new HttpError(415, "unsupported_media_type", "Expected multipart form data");
@@ -603,37 +771,37 @@ async function uploadQrVersion(
   }
   const capturedAt = optionalCapturedAt(formString(form, "capturedAt", false));
   const decodedPayloadHash = await sha256(
-    `${auth.tenantId}${decodedPayload}`,
+    `${auth.accountId}${decodedPayload}`,
   );
 
   const existing = await env.DB.prepare(
-    `SELECT id, tenant_id, channel_id, decoded_payload_hash, source_asset_id,
+    `SELECT id, account_id, channel_id, decoded_payload_hash, source_asset_id,
             captured_at, activated_at, created_at
      FROM qr_versions
-     WHERE tenant_id = ? AND channel_id = ? AND decoded_payload_hash = ?
+     WHERE account_id = ? AND channel_id = ? AND decoded_payload_hash = ?
      LIMIT 1`,
   )
-    .bind(auth.tenantId, channelId, decodedPayloadHash)
+    .bind(auth.accountId, channelId, decodedPayloadHash)
     .first<QrVersionRow>();
   if (existing) {
     const now = new Date().toISOString();
     await env.DB.prepare(
       `UPDATE channels SET active_qr_version_id = ?, updated_at = ?
-       WHERE id = ? AND tenant_id = ?`,
+       WHERE id = ? AND account_id = ?`,
     )
-      .bind(existing.id, now, channelId, auth.tenantId)
+      .bind(existing.id, now, channelId, auth.accountId)
       .run();
     const channel = await env.DB.prepare(
-      "SELECT * FROM channels WHERE id = ? AND tenant_id = ? LIMIT 1",
+      "SELECT * FROM channels WHERE id = ? AND account_id = ? LIMIT 1",
     )
-      .bind(channelId, auth.tenantId)
+      .bind(channelId, auth.accountId)
       .first<ChannelRow>();
     if (!channel) throw new HttpError(404, "channel_not_found", "Channel was not found");
     return json({ qrVersion: qrVersionFromRow(existing), channel: channelFromRow(channel) });
   }
 
   const versionId = crypto.randomUUID();
-  const objectKey = `tenants/${auth.tenantId}/channels/${channelId}/${versionId}`;
+  const objectKey = `accounts/${auth.accountId}/channels/${channelId}/${versionId}`;
   const now = new Date().toISOString();
   await env.QR_BUCKET.put(objectKey, image, {
     httpMetadata: {
@@ -641,7 +809,7 @@ async function uploadQrVersion(
       cacheControl: "public, max-age=31536000, immutable",
     },
     customMetadata: {
-      tenantId: auth.tenantId,
+      accountId: auth.accountId,
       channelId,
       versionId,
     },
@@ -651,12 +819,12 @@ async function uploadQrVersion(
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO qr_versions (
-           id, tenant_id, channel_id, object_key, content_type, byte_size,
+           id, account_id, channel_id, object_key, content_type, byte_size,
            decoded_payload_hash, source_asset_id, captured_at, activated_at, created_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         versionId,
-        auth.tenantId,
+        auth.accountId,
         channelId,
         objectKey,
         normalizedType,
@@ -669,8 +837,8 @@ async function uploadQrVersion(
       ),
       env.DB.prepare(
         `UPDATE channels SET active_qr_version_id = ?, updated_at = ?
-         WHERE id = ? AND tenant_id = ?`,
-      ).bind(versionId, now, channelId, auth.tenantId),
+         WHERE id = ? AND account_id = ?`,
+      ).bind(versionId, now, channelId, auth.accountId),
     ]);
   } catch (error) {
     await env.QR_BUCKET.delete(objectKey);
@@ -679,16 +847,16 @@ async function uploadQrVersion(
 
   const [qrVersion, channel] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, tenant_id, channel_id, decoded_payload_hash, source_asset_id,
+      `SELECT id, account_id, channel_id, decoded_payload_hash, source_asset_id,
               captured_at, activated_at, created_at
-       FROM qr_versions WHERE id = ? AND tenant_id = ? AND channel_id = ? LIMIT 1`,
+       FROM qr_versions WHERE id = ? AND account_id = ? AND channel_id = ? LIMIT 1`,
     )
-      .bind(versionId, auth.tenantId, channelId)
+      .bind(versionId, auth.accountId, channelId)
       .first<QrVersionRow>(),
     env.DB.prepare(
-      "SELECT * FROM channels WHERE id = ? AND tenant_id = ? LIMIT 1",
+      "SELECT * FROM channels WHERE id = ? AND account_id = ? LIMIT 1",
     )
-      .bind(channelId, auth.tenantId)
+      .bind(channelId, auth.accountId)
       .first<ChannelRow>(),
   ]);
   if (!qrVersion || !channel) {
@@ -700,126 +868,31 @@ async function uploadQrVersion(
   );
 }
 
-async function createPairingCode(request: Request, env: Env): Promise<Response> {
-  const auth = await authenticate(request, env);
-  const code = randomPairingCode();
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + 10 * 60 * 1_000).toISOString();
-  await env.DB.prepare(
-    `INSERT INTO pairing_codes (
-       id, tenant_id, user_id, code_hash, expires_at, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      crypto.randomUUID(),
-      auth.tenantId,
-      auth.userId,
-      await sha256(code),
-      expiresAt,
-      now.toISOString(),
-    )
-    .run();
-  return json({ pairingCode: { code, expiresAt } }, { status: 201 });
-}
-
-async function pair(request: Request, env: Env): Promise<Response> {
-  const body = record(await readJson(request));
-  const code = typeof body.code === "string"
-    ? body.code.trim().replace(/\s+/gu, "").toUpperCase()
-    : "";
-  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{10}$/u.test(code)) {
-    throw new HttpError(
-      400,
-      "invalid_pairing_code",
-      "Pairing code must be the 10-character code from the web dashboard",
-    );
-  }
-  const pairing = await env.DB.prepare(
-    `SELECT id, tenant_id, user_id, expires_at, consumed_at
-     FROM pairing_codes WHERE code_hash = ? LIMIT 1`,
-  )
-    .bind(await sha256(code))
-    .first<PairingRow>();
-  if (
-    !pairing ||
-    pairing.consumed_at !== null ||
-    pairing.expires_at <= new Date().toISOString()
-  ) {
-    throw new HttpError(410, "pairing_code_expired", "Pairing code is expired or already used");
-  }
-  const session = await newSession(365 * 24 * 60 * 60);
-  const now = new Date().toISOString();
-  try {
-    const results = await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO sessions (
-           id, tenant_id, user_id, pairing_code_id, token_hash, kind,
-           expires_at, created_at, last_used_at
-         )
-         SELECT ?, tenant_id, user_id, id, ?, 'mobile', ?, ?, ?
-         FROM pairing_codes
-         WHERE id = ? AND tenant_id = ? AND consumed_at IS NULL AND expires_at > ?`,
-      ).bind(
-        session.id,
-        session.tokenHash,
-        session.expiresAt,
-        now,
-        now,
-        pairing.id,
-        pairing.tenant_id,
-        now,
-      ),
-      env.DB.prepare(
-        `UPDATE pairing_codes SET consumed_at = ?
-         WHERE id = ? AND tenant_id = ? AND consumed_at IS NULL AND expires_at > ?`,
-      ).bind(now, pairing.id, pairing.tenant_id, now),
-    ]);
-    if (results[0]?.meta.changes !== 1) {
-      throw new HttpError(410, "pairing_code_expired", "Pairing code is expired or already used");
-    }
-  } catch (error) {
-    if (error instanceof HttpError) {
-      throw error;
-    }
-    if (
-      error instanceof Error &&
-      error.message.includes("UNIQUE")
-    ) {
-      throw new HttpError(410, "pairing_code_expired", "Pairing code is expired or already used");
-    }
-    throw error;
-  }
-  return json({ sessionToken: session.token, deployment: deployment(request, env) });
-}
-
 async function upsertDevice(request: Request, env: Env): Promise<Response> {
-  const auth = await authenticate(request, env);
-  if (auth.sessionKind !== "mobile") {
-    throw new HttpError(403, "mobile_session_required", "A paired mobile session is required");
-  }
+  const auth = await authenticate(request, env, "mobile");
+  if (!auth.deviceId) throw new HttpError(401, "device_required", "Mobile device is missing");
   const input = parseDeviceInput(await readJson(request), env);
   const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE devices
+     SET apns_token = NULL, apns_environment = NULL,
+         notifications_enabled = 0, updated_at = ?
+     WHERE apns_token = ? AND id <> ?`,
+  )
+    .bind(now, input.apnsToken, auth.deviceId)
+    .run();
   const row = await env.DB.prepare(
-    `INSERT INTO devices (
-       id, tenant_id, user_id, platform, apns_token, apns_environment,
-       notifications_enabled, created_at, updated_at
-     ) VALUES (?, ?, ?, 'ios', ?, ?, ?, ?, ?)
-     ON CONFLICT(tenant_id, apns_token) DO UPDATE SET
-       user_id = excluded.user_id,
-       apns_environment = excluded.apns_environment,
-       notifications_enabled = excluded.notifications_enabled,
-       updated_at = excluded.updated_at
-     RETURNING *`,
+    `UPDATE devices
+     SET apns_token = ?, apns_environment = ?, notifications_enabled = ?, updated_at = ?
+     WHERE id = ? AND account_id = ? RETURNING *`,
   )
     .bind(
-      crypto.randomUUID(),
-      auth.tenantId,
-      auth.userId,
       input.apnsToken,
       input.environment,
       input.notificationsEnabled ? 1 : 0,
       now,
-      now,
+      auth.deviceId,
+      auth.accountId,
     )
     .first<DeviceRow>();
   if (!row) throw new Error("Device upsert did not return a record");
@@ -831,11 +904,14 @@ async function deleteDevice(
   env: Env,
   deviceId: string,
 ): Promise<Response> {
-  const auth = await authenticate(request, env);
+  const auth = await authenticate(request, env, "mobile");
+  if (auth.deviceId !== deviceId) {
+    throw new HttpError(403, "device_mismatch", "A device can only disconnect itself");
+  }
   const result = await env.DB.prepare(
-    "DELETE FROM devices WHERE id = ? AND tenant_id = ? AND user_id = ?",
+    "DELETE FROM devices WHERE id = ? AND account_id = ?",
   )
-    .bind(deviceId, auth.tenantId, auth.userId)
+    .bind(deviceId, auth.accountId)
     .run();
   if (result.meta.changes !== 1) {
     throw new HttpError(404, "device_not_found", "Device was not found");
@@ -846,12 +922,12 @@ async function deleteDevice(
 async function publicChannel(env: Env, slug: string): Promise<PublicChannelRow | null> {
   return env.DB.prepare(
     `SELECT
-       c.id, c.tenant_id, c.name, c.slug, c.expires_at, c.active_qr_version_id,
+       c.id, c.account_id, c.name, c.slug, c.expires_at, c.active_qr_version_id,
        q.object_key
      FROM channels c
      LEFT JOIN qr_versions q
        ON q.id = c.active_qr_version_id
-      AND q.tenant_id = c.tenant_id
+      AND q.account_id = c.account_id
       AND q.channel_id = c.id
      WHERE c.slug = ? AND c.disabled_at IS NULL
      LIMIT 1`,
@@ -930,27 +1006,24 @@ async function routeApi(
   if (method === "GET" && (pathname === "/health" || pathname === `${API_PREFIX}/health`)) {
     return health(request, env);
   }
-  if (method === "POST" && pathname === `${API_PREFIX}/bootstrap`) {
-    return bootstrap(request, env);
+  if (method === "POST" && pathname === `${API_PREFIX}/mobile/bootstrap`) {
+    return mobileBootstrap(request, env);
   }
   if (method === "GET" && pathname === `${API_PREFIX}/me`) {
     return me(request, env, ctx);
   }
-  if (method === "POST" && pathname === `${API_PREFIX}/auth/request-code`) {
-    return requestAuthCode(request, env);
+  if (method === "POST" && pathname === `${API_PREFIX}/web/logout`) {
+    return logoutWeb(request, env);
   }
-  if (method === "POST" && pathname === `${API_PREFIX}/auth/verify-code`) {
-    return verifyAuthCode(request, env);
+  if (method === "POST" && pathname === `${API_PREFIX}/web-bindings`) {
+    return createWebBinding(request, env);
+  }
+  if (method === "GET" && pathname === `${API_PREFIX}/web-sessions`) {
+    return listWebSessions(request, env);
   }
   if (pathname === `${API_PREFIX}/channels`) {
     if (method === "GET") return listChannels(request, env);
     if (method === "POST") return createChannel(request, env);
-  }
-  if (method === "POST" && pathname === `${API_PREFIX}/pairing-codes`) {
-    return createPairingCode(request, env);
-  }
-  if (method === "POST" && pathname === `${API_PREFIX}/pair`) {
-    return pair(request, env);
   }
   if (method === "POST" && pathname === `${API_PREFIX}/devices`) {
     return upsertDevice(request, env);
@@ -960,6 +1033,30 @@ async function routeApi(
   }
   if (method === "GET" && pathname === `${API_PREFIX}/inbox`) {
     return listInbox(request, env);
+  }
+
+  const webBindingMatch = new RegExp(
+    `^${API_PREFIX}/web-bindings/([^/]+)(?:/(approve|consume))?$`,
+    "u",
+  ).exec(pathname);
+  if (webBindingMatch?.[1]) {
+    const bindingId = decodeURIComponent(webBindingMatch[1]);
+    if (method === "GET" && !webBindingMatch[2]) {
+      return webBindingStatus(request, env, bindingId);
+    }
+    if (method === "POST" && webBindingMatch[2] === "approve") {
+      return approveWebBinding(request, env, bindingId);
+    }
+    if (method === "POST" && webBindingMatch[2] === "consume") {
+      return consumeWebBinding(request, env, bindingId);
+    }
+  }
+
+  const webSessionMatch = new RegExp(`^${API_PREFIX}/web-sessions/([^/]+)$`, "u").exec(
+    pathname,
+  );
+  if (webSessionMatch?.[1] && method === "DELETE") {
+    return revokeWebSession(request, env, decodeURIComponent(webSessionMatch[1]));
   }
 
   const inboxActionMatch = new RegExp(
@@ -1010,7 +1107,7 @@ export default {
     try {
       const url = new URL(request.url);
       if (request.method.toUpperCase() === "OPTIONS") {
-        return corsPreflight(request, env);
+        return new Response(null, { status: 204 });
       }
       const imageMatch = /^\/q\/([^/]+)\/image$/u.exec(url.pathname);
       if (imageMatch?.[1] && request.method === "GET") {
@@ -1020,8 +1117,7 @@ export default {
       if (pageMatch?.[1] && request.method === "GET") {
         return publicQrPage(env, decodeURIComponent(pageMatch[1]));
       }
-      const response = await routeApi(request, env, ctx, url.pathname);
-      return withCors(response, request, env);
+      return await routeApi(request, env, ctx, url.pathname);
     } catch (error) {
       const response =
         error instanceof HttpError
@@ -1038,7 +1134,7 @@ export default {
                 new HttpError(500, "internal_error", "An internal error occurred"),
               );
             })();
-      return withCors(response, request, env);
+      return response;
     }
   },
 

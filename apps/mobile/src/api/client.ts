@@ -6,14 +6,16 @@ import type {
   IgnoreDetectionResponse,
   InboxItem,
   InboxResponse,
+  MobileBootstrapResponse,
   QrCandidate,
   QrVersion,
   UndoDetectionResponse,
+  WebSession,
 } from "@qr-lifecycle/contracts";
 import { fetch as expoFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 
-import { normalizeApiOrigin, parsePairPayload, type PairPayload } from "@/lib/pure";
+import { normalizeApiOrigin } from "@/lib/pure";
 import type { MobileSession } from "@/session/storage";
 
 interface ApiErrorBody {
@@ -66,12 +68,53 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-export async function pairDeployment(origin: string, code: string): Promise<PairPayload> {
-  const raw = await request<unknown>(origin, "/pair", {
+export async function bootstrapMobile(
+  origin: string,
+  input: {
+    installationId: string;
+    deviceName: string;
+    appTransactionJws?: string;
+  },
+): Promise<MobileBootstrapResponse> {
+  return request<MobileBootstrapResponse>(origin, "/mobile/bootstrap", {
     method: "POST",
-    body: JSON.stringify({ code }),
+    body: JSON.stringify(input),
   });
-  return parsePairPayload(raw);
+}
+
+export async function approveWebBinding(
+  session: MobileSession,
+  bindingId: string,
+  challenge: string,
+): Promise<void> {
+  await request(
+    session.deployment.apiOrigin,
+    `/web-bindings/${encodeURIComponent(bindingId)}/approve`,
+    { method: "POST", body: JSON.stringify({ challenge }) },
+    session.token,
+  );
+}
+
+export async function listWebSessions(session: MobileSession): Promise<WebSession[]> {
+  const result = await request<{ sessions: WebSession[] }>(
+    session.deployment.apiOrigin,
+    "/web-sessions",
+    { method: "GET" },
+    session.token,
+  );
+  return result.sessions;
+}
+
+export async function revokeWebSession(
+  session: MobileSession,
+  webSessionId: string,
+): Promise<void> {
+  await request(
+    session.deployment.apiOrigin,
+    `/web-sessions/${encodeURIComponent(webSessionId)}`,
+    { method: "DELETE" },
+    session.token,
+  );
 }
 
 export async function listChannels(session: MobileSession): Promise<Channel[]> {

@@ -2,11 +2,13 @@ const {
   IOSConfig,
   createRunOncePlugin,
   withAppDelegate,
+  withEntitlementsPlist,
   withInfoPlist,
+  withXcodeProject,
 } = require("expo/config-plugins");
 
 const pluginName = "with-ios-scene-lifecycle";
-const pluginVersion = "1.0.0";
+const pluginVersion = "1.1.0";
 const appDelegateMarker = "SceneDelegate creates the UIWindow and starts React Native.";
 
 const legacyStartupBlock = `#if os(iOS) || os(tvOS)
@@ -181,6 +183,10 @@ function patchAppDelegate(contents) {
   return contents.replace(legacyStartupBlock, sceneStartupComment);
 }
 
+function pushEnvironmentForConfiguration(name) {
+  return String(name).replaceAll('"', "") === "Release" ? "production" : "development";
+}
+
 function withIosSceneLifecycle(config) {
   config = withInfoPlist(config, (configWithPlist) => {
     configWithPlist.modResults.UIApplicationSceneManifest = sceneManifest;
@@ -197,6 +203,26 @@ function withIosSceneLifecycle(config) {
     return configWithDelegate;
   });
 
+  config = withEntitlementsPlist(config, (configWithEntitlements) => {
+    // A checked-in literal cannot represent both development-client and Ad Hoc
+    // signing. Xcode expands this per configuration from the settings below.
+    configWithEntitlements.modResults["aps-environment"] = "$(APS_ENVIRONMENT)";
+    return configWithEntitlements;
+  });
+
+  config = withXcodeProject(config, (configWithProject) => {
+    const configurations = configWithProject.modResults.pbxXCBuildConfigurationSection();
+    for (const configuration of Object.values(configurations)) {
+      if (!configuration || typeof configuration !== "object" || !("buildSettings" in configuration)) {
+        continue;
+      }
+      configuration.buildSettings.APS_ENVIRONMENT = pushEnvironmentForConfiguration(
+        "name" in configuration ? configuration.name : "Debug",
+      );
+    }
+    return configWithProject;
+  });
+
   return IOSConfig.XcodeProjectFile.withBuildSourceFile(config, {
     filePath: "SceneDelegate.swift",
     contents: sceneDelegateContents,
@@ -208,6 +234,7 @@ const plugin = createRunOncePlugin(withIosSceneLifecycle, pluginName, pluginVers
 plugin._internals = {
   legacyStartupBlock,
   patchAppDelegate,
+  pushEnvironmentForConfiguration,
   sceneDelegateContents,
   sceneManifest,
 };

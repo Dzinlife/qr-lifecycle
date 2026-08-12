@@ -23,6 +23,6 @@ describe("DashboardPage", () => {
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "从手机自动发现第一个群码" })).toBeTruthy();
-    expect(screen.getByRole<HTMLAnchorElement>("link", { name: /连接手机/ }).getAttribute("href")).toBe("/pairing");
+    expect(screen.queryByRole("link", { name: /连接手机|手动创建/ })).toBeNull();
   });
 });

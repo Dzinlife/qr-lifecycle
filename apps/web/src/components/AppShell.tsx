@@ -1,53 +1,31 @@
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  LayoutGrid,
-  LogOut,
-  QrCode,
-  Settings,
-  Smartphone,
-} from "lucide-react";
+import type { ReactNode } from "react";
+import { LayoutGrid, LogOut, QrCode, Settings, Smartphone } from "lucide-react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { api, ApiError, type MeResponse } from "../api/client";
+
+import type { MeResponse } from "../api/client";
 
 const navigation = [
   { to: "/", label: "频道状态", icon: LayoutGrid, exact: true },
-  { to: "/pairing", label: "连接手机", icon: Smartphone },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
-export function AppShell({ children, onLogout }: { children: ReactNode; onLogout: () => void }) {
-  const [me, setMe] = useState<MeResponse | null>(null);
+export function AppShell({
+  children,
+  me,
+  onLogout,
+}: {
+  children: ReactNode;
+  me: MeResponse;
+  onLogout: () => void;
+}) {
   const location = useLocation();
-
-  useEffect(() => {
-    let active = true;
-    api.me().then(
-      (response) => {
-        if (active) setMe(response);
-      },
-      (error: unknown) => {
-        if (active && error instanceof ApiError && error.status === 401) onLogout();
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [onLogout]);
-
-  const signOut = () => {
-    api.clearSession();
-    onLogout();
-  };
 
   return (
     <div className="app-frame">
       <aside className="sidebar">
-        <Link className="brand" to="/" aria-label="续码工作台">
+        <Link className="brand" to="/" aria-label="Fallinlife 群码">
           <span className="brand__mark"><QrCode size={23} strokeWidth={2.4} /></span>
-          <span>
-            <strong>{me?.deployment.productName ?? "续码"}</strong>
-            <small>QR Lifecycle</small>
-          </span>
+          <span><strong>{me.deployment.productName}</strong><small>QR Lifecycle</small></span>
         </Link>
 
         <nav className="sidebar__nav" aria-label="主导航">
@@ -65,14 +43,12 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
         </nav>
 
         <div className="sidebar__account">
-          <div className="account-avatar" aria-hidden="true">
-            {(me?.user.displayName || me?.user.email || "续").slice(0, 1).toUpperCase()}
-          </div>
+          <div className="account-avatar" aria-hidden="true"><Smartphone size={17} /></div>
           <div className="account-copy">
-            <strong>{me?.user.displayName || me?.tenant.name || "正在加载"}</strong>
-            <small>{me?.tenant.name ?? "工作区"}</small>
+            <strong>已由手机授权</strong>
+            <small>可在 App 中撤销</small>
           </div>
-          <button className="icon-button" type="button" onClick={signOut} aria-label="退出登录">
+          <button className="icon-button" type="button" onClick={onLogout} aria-label="断开此浏览器">
             <LogOut size={17} />
           </button>
         </div>
@@ -81,9 +57,9 @@ export function AppShell({ children, onLogout }: { children: ReactNode; onLogout
       <header className="mobile-header">
         <Link className="brand brand--mobile" to="/">
           <span className="brand__mark"><QrCode size={20} /></span>
-          <strong>{me?.deployment.productName ?? "续码"}</strong>
+          <strong>{me.deployment.productName}</strong>
         </Link>
-        <span className="mobile-header__tenant">{me?.tenant.name ?? ""}</span>
+        <span className="mobile-header__tenant">手机已授权</span>
       </header>
 
       <main className="main-content" key={location.pathname}>{children}</main>

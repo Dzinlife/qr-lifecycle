@@ -123,9 +123,7 @@ export function ChannelDetailPage() {
             <p><strong>3</strong><span>高置信度结果直接更新；不确定的结果只需点一次确认。</span></p>
           </div>
           <p className="upload-card__hint"><Smartphone size={14} /> Web 仅用于查看、纠错和运维，不会读取或分析你的图片。</p>
-          <Link className="button button--secondary button--wide" to="/pairing">
-            连接或重新连接手机
-          </Link>
+          <p className="upload-card__hint">需要授权其他浏览器时，请在手机 App 的“设置”中扫描新绑定码。</p>
         </article>
       </section>
 

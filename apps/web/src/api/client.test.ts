@@ -1,17 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "./client";
 
 describe("api client", () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("adds the bearer token to authenticated requests", async () => {
-    api.setSessionToken("test-session");
+  it("uses cookie credentials without exposing a bearer token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ channels: [] }), {
         status: 200,
@@ -23,7 +18,24 @@ describe("api client", () => {
     await api.listChannels();
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer test-session");
+    expect(init.credentials).toBe("include");
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+  });
+
+  it("keeps the binding secret in a request header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "pending", expiresAt: new Date().toISOString() }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getWebBindingStatus("binding-id", "browser-secret");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain("browser-secret");
+    expect(new Headers(init.headers).get("X-Binding-Secret")).toBe("browser-secret");
   });
 
   it("surfaces the API error envelope", async () => {

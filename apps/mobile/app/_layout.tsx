@@ -23,7 +23,8 @@ function Navigation() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="pair" options={{ title: "连接部署" }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="web-bind" options={{ title: "绑定官方网站" }} />
         <Stack.Screen name="discover" options={{ headerShown: false }} />
         <Stack.Screen name="channels/index" options={{ headerShown: false }} />
         <Stack.Screen name="channels/[channelId]" options={{ title: "群码详情" }} />

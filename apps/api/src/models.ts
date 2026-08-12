@@ -2,7 +2,7 @@ import type { Channel, QrVersion } from "@qr-lifecycle/contracts";
 
 export interface ChannelRow {
   id: string;
-  tenant_id: string;
+  account_id: string;
   name: string;
   platform: Channel["platform"];
   slug: string;
@@ -16,7 +16,7 @@ export interface ChannelRow {
 
 export interface QrVersionRow {
   id: string;
-  tenant_id: string;
+  account_id: string;
   channel_id: string;
   decoded_payload_hash: string;
   source_asset_id: string | null;
@@ -25,33 +25,14 @@ export interface QrVersionRow {
   created_at: string;
 }
 
-export interface AuthRow {
-  session_id: string;
-  tenant_id: string;
-  user_id: string;
-  session_kind: "web" | "mobile";
-  email: string;
-  display_name: string;
-  tenant_name: string;
-  tenant_slug: string;
-  role: "owner" | "member";
-}
-
-export interface PairingRow {
-  id: string;
-  tenant_id: string;
-  user_id: string;
-  expires_at: string;
-  consumed_at: string | null;
-}
-
 export interface DeviceRow {
   id: string;
-  tenant_id: string;
-  user_id: string;
+  account_id: string;
+  device_key_hash: string;
   platform: "ios" | "android";
-  apns_token: string;
-  apns_environment: "production" | "sandbox";
+  display_name: string | null;
+  apns_token: string | null;
+  apns_environment: "production" | "sandbox" | null;
   notifications_enabled: number;
   created_at: string;
   updated_at: string;
@@ -60,7 +41,7 @@ export interface DeviceRow {
 export function channelFromRow(row: ChannelRow): Channel {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
+    accountId: row.account_id,
     name: row.name,
     platform: row.platform,
     slug: row.slug,
@@ -76,7 +57,7 @@ export function channelFromRow(row: ChannelRow): Channel {
 export function qrVersionFromRow(row: QrVersionRow): QrVersion {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
+    accountId: row.account_id,
     channelId: row.channel_id,
     decodedPayloadHash: row.decoded_payload_hash,
     sourceAssetId: row.source_asset_id,
@@ -97,7 +78,7 @@ export function deviceFromRow(row: DeviceRow): {
   return {
     id: row.id,
     platform: row.platform,
-    environment: row.apns_environment,
+    environment: row.apns_environment ?? "production",
     notificationsEnabled: row.notifications_enabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

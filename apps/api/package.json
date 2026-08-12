@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "3.1.0",
     "@qr-lifecycle/contracts": "workspace:*"
   },
   "devDependencies": {

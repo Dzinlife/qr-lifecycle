@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { ChannelPlatform, CreateChannelInput } from "@qr-lifecycle/contracts";
+import type { ChannelPlatform, UpdateChannelInput } from "@qr-lifecycle/contracts";
 import {
   ArrowLeft,
   Check,
@@ -33,23 +33,18 @@ function toLocalDateTime(value: string | null): string {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
-function suggestedSlug(): string {
-  return `group-${Date.now().toString(36).slice(-6)}`;
-}
-
 function messageFor(error: unknown): string {
   return error instanceof ApiError ? error.message : "保存失败，请稍后重试。";
 }
 
 export function ChannelFormPage() {
   const { channelId } = useParams();
-  const editing = Boolean(channelId);
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(editing);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState<ChannelPlatform>("wechat_group");
-  const [slug, setSlug] = useState(suggestedSlug);
+  const [slug, setSlug] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [reminderDays, setReminderDays] = useState("1");
   const [saving, setSaving] = useState(false);
@@ -78,7 +73,8 @@ export function ChannelFormPage() {
     event.preventDefault();
     setSaving(true);
     setSaveError(null);
-    const input: CreateChannelInput = {
+    if (!channelId) return;
+    const input: UpdateChannelInput = {
       name: name.trim(),
       platform,
       slug: slug.trim().toLowerCase(),
@@ -86,9 +82,7 @@ export function ChannelFormPage() {
       remindBeforeMinutes: Math.round(Number(reminderDays) * 1_440),
     };
     try {
-      const { channel } = channelId
-        ? await api.updateChannel(channelId, input)
-        : await api.createChannel(input);
+      const { channel } = await api.updateChannel(channelId, input);
       navigate(`/channels/${channel.id}`, { replace: true });
     } catch (error) {
       setSaveError(messageFor(error));
@@ -103,12 +97,12 @@ export function ChannelFormPage() {
   return (
     <div className="page page--narrow">
       <Link className="back-link" to={channelId ? `/channels/${channelId}` : "/"}>
-        <ArrowLeft size={16} /> {channelId ? "返回频道" : "返回工作台"}
+        <ArrowLeft size={16} /> 返回频道
       </Link>
       <PageHeading
-        eyebrow={editing ? "频道设置" : "手动兜底"}
-        title={editing ? "编辑频道" : "手动创建频道"}
-        description={editing ? "修正手机识别的名称、公开地址和提醒时间。" : "只有手机无法识别图片时才需要手动创建；二维码仍由手机 App 添加。"}
+        eyebrow="辅助纠错"
+        title="编辑频道"
+        description="修正手机识别的名称、公开地址和提醒时间。新频道仍只由手机自动创建。"
       />
 
       <form className="editor-card" onSubmit={submit}>
@@ -190,7 +184,7 @@ export function ChannelFormPage() {
           <Link className="button button--ghost" to={channelId ? `/channels/${channelId}` : "/"}>取消</Link>
           <button className="button button--primary" disabled={saving}>
             {saving ? <LoaderCircle className="spin" size={17} /> : null}
-            {editing ? "保存修改" : "创建并上传二维码"}
+            保存修改
           </button>
         </footer>
       </form>
