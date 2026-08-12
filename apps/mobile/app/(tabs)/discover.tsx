@@ -36,7 +36,6 @@ import {
 import {
   Button,
   Card,
-  MainNavigation,
   Notice,
   colors,
   textStyles,
@@ -521,9 +520,10 @@ export default function DiscoverScreen() {
   const scanning = ["permission", "scanning", "analyzing", "committing", "cancelling"].includes(phase);
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
+    <SafeAreaView edges={["top"]} style={styles.safeArea}>
       <ScrollView
         contentContainerStyle={styles.content}
+        contentInsetAdjustmentBehavior="automatic"
         refreshControl={(
           <RefreshControl
             refreshing={refreshing}
@@ -531,8 +531,6 @@ export default function DiscoverScreen() {
           />
         )}
       >
-        <MainNavigation active="/discover" />
-
         <View style={styles.hero}>
           <Text style={textStyles.eyebrow}>{session.deployment.productName}</Text>
           <Text style={textStyles.title}>保存群码，剩下的交给这里</Text>

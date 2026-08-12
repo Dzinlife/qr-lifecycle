@@ -9,7 +9,6 @@ import { listWebSessions, revokeWebSession } from "@/api/client";
 import {
   Button,
   Card,
-  MainNavigation,
   Notice,
   Screen,
   textStyles,
@@ -61,9 +60,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <Screen>
-      <MainNavigation active="/settings" />
-
+    <Screen edges={["top"]}>
       <View style={styles.header}>
         <Text style={textStyles.eyebrow}>自动化设置</Text>
         <Text style={textStyles.title}>设置</Text>

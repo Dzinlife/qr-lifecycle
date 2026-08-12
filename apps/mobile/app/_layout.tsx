@@ -1,10 +1,22 @@
-import { Stack } from "expo-router";
+import { DefaultTheme, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { colors } from "@/components/ui";
 import { AppProvider, useApp } from "@/context/app-context";
 import { useNotificationRouting, usePushTokenRefresh } from "@/notifications/push";
+
+const appTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: colors.background,
+    border: colors.border,
+    card: colors.background,
+    primary: colors.primary,
+    text: colors.ink,
+  },
+};
 
 function Navigation() {
   const { session, setDeviceId } = useApp();
@@ -25,10 +37,7 @@ function Navigation() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false }} />
         <Stack.Screen name="web-bind" options={{ title: "绑定官方网站" }} />
-        <Stack.Screen name="discover" options={{ headerShown: false }} />
-        <Stack.Screen name="channels/index" options={{ headerShown: false }} />
-        <Stack.Screen name="channels/[channelId]" options={{ title: "群码详情" }} />
-        <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </>
   );
@@ -38,7 +47,9 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AppProvider>
-        <Navigation />
+        <ThemeProvider value={appTheme}>
+          <Navigation />
+        </ThemeProvider>
       </AppProvider>
     </SafeAreaProvider>
   );
