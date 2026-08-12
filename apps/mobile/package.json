@@ -11,7 +11,7 @@
     "android": "expo run:android",
     "native:generate": "expo prebuild",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/lib/*.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/*.test.ts plugins/*.test.cjs"
   },
   "dependencies": {
     "@qr-lifecycle/contracts": "workspace:*",
