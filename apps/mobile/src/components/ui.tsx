@@ -58,10 +58,10 @@ export function MainNavigation({ active }: { active: MainRoute }) {
           <Pressable
             accessibilityRole="tab"
             accessibilityState={{ selected: route.href === active }}
-            style={[
+            style={StyleSheet.flatten([
               styles.mainNavigationItem,
               route.href === active && styles.mainNavigationItemActive,
-            ]}
+            ])}
           >
             <Text
               style={[

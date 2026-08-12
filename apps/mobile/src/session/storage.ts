@@ -1,3 +1,4 @@
+import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 
 import type { DeploymentInfo, ScanCursor } from "@qr-lifecycle/contracts";
@@ -43,7 +44,8 @@ export async function loadSession(): Promise<MobileSession | null> {
 export async function getOrCreateInstallationId(): Promise<string> {
   const existing = await SecureStore.getItemAsync(INSTALLATION_KEY);
   if (existing && /^[A-Za-z0-9_-]{43,128}$/u.test(existing)) return existing;
-  const generated = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
+  const randomBytes = await Crypto.getRandomBytesAsync(32);
+  const generated = Array.from(randomBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   await SecureStore.setItemAsync(INSTALLATION_KEY, generated, {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
