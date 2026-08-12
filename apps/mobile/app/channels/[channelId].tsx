@@ -89,11 +89,11 @@ export default function ChannelDetailScreen() {
 
   if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
-  if (!channelId) return <Screen><Notice tone="danger">频道链接无效。</Notice></Screen>;
+  if (!channelId) return <Screen edges={[]}><Notice tone="danger">频道链接无效。</Notice></Screen>;
   if (loading) return <Loading label="正在读取群码…" />;
   if (loadError || !channel) {
     return (
-      <Screen>
+      <Screen edges={[]}>
         <Notice tone="danger">{loadError ?? "找不到这个群码"}</Notice>
         <Button onPress={() => void load()}>重试</Button>
       </Screen>
@@ -151,7 +151,7 @@ export default function ChannelDetailScreen() {
   };
 
   return (
-    <Screen>
+    <Screen edges={[]}>
       <View style={styles.header}>
         <Text style={textStyles.eyebrow}>{platformNames[channel.platform]}</Text>
         <Text style={textStyles.title}>{channel.name}</Text>
