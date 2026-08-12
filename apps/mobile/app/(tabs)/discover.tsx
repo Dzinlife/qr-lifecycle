@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   AppState,
   Image,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type {
@@ -171,7 +175,65 @@ function InboxCard({
   onIgnore(): void;
 }) {
   const { detection, suggestedChannel } = item;
+  const { height: windowHeight } = useWindowDimensions();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTranslateY = useRef(new Animated.Value(0)).current;
+  const closePreview = () => {
+    Animated.timing(previewTranslateY, {
+      duration: 180,
+      toValue: windowHeight,
+      useNativeDriver: true,
+    }).start(() => {
+      setPreviewOpen(false);
+      previewTranslateY.setValue(0);
+    });
+  };
+  const openPreview = () => {
+    previewTranslateY.stopAnimation();
+    previewTranslateY.setValue(0);
+    setPreviewOpen(true);
+  };
+  const previewPanResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) =>
+      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderMove: (_, gesture) => {
+      previewTranslateY.setValue(gesture.dy >= 0 ? gesture.dy : gesture.dy * 0.12);
+    },
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dy > Math.min(160, windowHeight * 0.16) || gesture.vy > 1.05) {
+        closePreview();
+        return;
+      }
+      Animated.spring(previewTranslateY, {
+        damping: 22,
+        mass: 0.8,
+        stiffness: 240,
+        toValue: 0,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(previewTranslateY, {
+        damping: 22,
+        stiffness: 240,
+        toValue: 0,
+        useNativeDriver: true,
+      }).start();
+    },
+  });
+  const previewProgress = previewTranslateY.interpolate({
+    inputRange: [0, windowHeight * 0.7],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
+  const previewBackdropOpacity = previewProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.12],
+  });
+  const previewScale = previewProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.88],
+  });
   const title = detection.name ?? suggestedChannel?.name ?? "未命名群码";
   const platform = detection.platform
     ? platformNames[detection.platform]
@@ -186,7 +248,7 @@ function InboxCard({
         <Pressable
           accessibilityLabel="查看检测原图"
           accessibilityRole="button"
-          onPress={() => setPreviewOpen(true)}
+          onPress={openPreview}
         >
           <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.reviewImage} />
           <Text style={styles.imageHint}>点击查看原图</Text>
@@ -243,30 +305,50 @@ function InboxCard({
         </Pressable>
       </View>
       <Modal
-        allowSwipeDismissal
-        animationType="slide"
-        onDismiss={() => setPreviewOpen(false)}
-        onRequestClose={() => setPreviewOpen(false)}
-        presentationStyle="pageSheet"
+        animationType="fade"
+        hardwareAccelerated
+        onRequestClose={closePreview}
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        transparent
         visible={previewOpen}
       >
-        <SafeAreaView style={styles.previewScreen}>
-          <View style={styles.previewHandle} />
-          <View style={styles.previewHeader}>
-            <Text style={styles.previewTitle}>检测原图</Text>
-            <Pressable
-              accessibilityRole="button"
-              hitSlop={12}
-              onPress={() => setPreviewOpen(false)}
-              style={styles.previewClose}
-            >
-              <Text style={styles.previewCloseText}>完成</Text>
-            </Pressable>
-          </View>
-          {imageUri ? (
-            <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.previewImage} />
-          ) : null}
-        </SafeAreaView>
+        {previewOpen ? <StatusBar style="light" /> : null}
+        <View style={styles.previewScreen}>
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.previewBackdrop, { opacity: previewBackdropOpacity }]}
+          />
+          <Animated.View
+            style={[
+              styles.previewContent,
+              {
+                transform: [
+                  { translateY: previewTranslateY },
+                  { scale: previewScale },
+                ],
+              },
+            ]}
+            {...previewPanResponder.panHandlers}
+          >
+            <SafeAreaView style={styles.previewSafeArea}>
+              <View style={styles.previewHeader}>
+                <Text style={styles.previewTitle}>检测原图</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={12}
+                  onPress={closePreview}
+                  style={styles.previewClose}
+                >
+                  <Text style={styles.previewCloseText}>完成</Text>
+                </Pressable>
+              </View>
+              {imageUri ? (
+                <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.previewImage} />
+              ) : null}
+            </SafeAreaView>
+          </Animated.View>
+        </View>
       </Modal>
     </Card>
   );
@@ -934,15 +1016,17 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
-  previewScreen: { backgroundColor: "#090B0A", flex: 1 },
-  previewHandle: {
-    alignSelf: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.34)",
-    borderRadius: 999,
-    height: 5,
-    marginTop: 8,
-    width: 42,
+  previewScreen: { flex: 1 },
+  previewBackdrop: {
+    backgroundColor: "#090B0A",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
+  previewContent: { flex: 1 },
+  previewSafeArea: { backgroundColor: "transparent", flex: 1 },
   previewHeader: {
     alignItems: "center",
     flexDirection: "row",
