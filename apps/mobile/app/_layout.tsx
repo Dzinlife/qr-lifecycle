@@ -41,6 +41,8 @@ function Navigation() {
           name="channels/[channelId]"
           options={{
             headerBlurEffect: "systemThinMaterial",
+            headerLargeStyle: { backgroundColor: "transparent" },
+            headerShadowVisible: true,
             headerStyle: { backgroundColor: "transparent" },
             headerTransparent: true,
             scrollEdgeEffects: {

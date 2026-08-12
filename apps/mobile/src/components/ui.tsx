@@ -12,6 +12,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { SafeAreaView, type Edges } from "react-native-safe-area-context";
+import { EdgeFadeView } from "react-native-edge-fade";
 import { ScrollViewMarker } from "react-native-screens/experimental";
 
 export const colors = {
@@ -80,12 +81,21 @@ export function ProgressiveTopScrollView({
   }
 
   return (
-    <ScrollViewMarker
-      scrollEdgeEffects={{ top: "soft" }}
+    <EdgeFadeView
+      blurRadius={24}
+      curve="soft"
+      frostProgression={1}
+      mode="blur"
       style={styles.safeArea}
+      top={88}
     >
-      {scrollView}
-    </ScrollViewMarker>
+      <ScrollViewMarker
+        scrollEdgeEffects={{ top: "hidden" }}
+        style={styles.safeArea}
+      >
+        {scrollView}
+      </ScrollViewMarker>
+    </EdgeFadeView>
   );
 }
 
