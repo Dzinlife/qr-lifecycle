@@ -266,12 +266,50 @@ describe.sequential("Fallinlife official Worker", () => {
 
     const page = await fetchApi("/q/xiaohongshu-friends");
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("小红书交流群");
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain("小红书交流群");
+    expect(pageHtml).toContain('src="/q/xiaohongshu-friends/image"');
+    expect(pageHtml).not.toContain("/image?v=");
 
     const image = await fetchApi("/q/xiaohongshu-friends/image");
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
+    expect(image.headers.get("cache-control")).toBe("public, no-cache, must-revalidate");
+    expect(image.headers.get("access-control-allow-origin")).toBe("*");
+    expect(image.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
     expect(new Uint8Array(await image.arrayBuffer())).toEqual(imageBytes);
+
+    const oldEtag = image.headers.get("etag");
+    expect(oldEtag).toBeTruthy();
+    const replacementBytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4]);
+    const replacement = new FormData();
+    replacement.set(
+      "image",
+      new File([replacementBytes], "replacement.png", { type: "image/png" }),
+    );
+    replacement.set("decodedPayload", "https://example.test/invite/replacement");
+    const replaced = await fetchApi(`/api/v1/channels/${channelId}/qr-versions`, {
+      method: "POST",
+      headers: { ...mobileHeaders(mobile.token), "content-length": "1024" },
+      body: replacement,
+    });
+    expect(replaced.status).toBe(201);
+
+    const sameStableUrl = await fetchApi("/q/xiaohongshu-friends/image", {
+      headers: { "if-none-match": oldEtag ?? "" },
+    });
+    expect(sameStableUrl.status).toBe(200);
+    expect(sameStableUrl.headers.get("etag")).not.toBe(oldEtag);
+    expect(new Uint8Array(await sameStableUrl.arrayBuffer())).toEqual(replacementBytes);
+
+    const currentEtag = sameStableUrl.headers.get("etag");
+    const unchanged = await fetchApi("/q/xiaohongshu-friends/image", {
+      headers: { "if-none-match": currentEtag ?? "" },
+    });
+    expect(unchanged.status).toBe(304);
+    expect(unchanged.headers.get("cache-control")).toBe(
+      "public, no-cache, must-revalidate",
+    );
   });
 
   it("registers the current mobile device and delivers one reminder", async () => {

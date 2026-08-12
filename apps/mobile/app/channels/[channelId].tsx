@@ -101,7 +101,7 @@ export default function ChannelDetailScreen() {
     }
   };
 
-  const stableUrl = `${session.deployment.apiOrigin}/q/${channel.slug}`;
+  const stableImageUrl = `${session.deployment.apiOrigin}/q/${channel.slug}/image`;
 
   return (
     <Screen>
@@ -112,10 +112,11 @@ export default function ChannelDetailScreen() {
       </View>
 
       <Card>
-        <Text style={textStyles.heading}>稳定入口</Text>
-        <Text selectable style={styles.link}>{stableUrl}</Text>
-        <Button tone="secondary" onPress={() => void Linking.openURL(stableUrl)}>
-          打开群码入口
+        <Text style={textStyles.heading}>固定图片地址</Text>
+        <Text style={textStyles.muted}>直接放进网站的图片标签，更新群码时 URL 不变。</Text>
+        <Text selectable style={styles.link}>{stableImageUrl}</Text>
+        <Button tone="secondary" onPress={() => void Linking.openURL(stableImageUrl)}>
+          打开当前原生群码
         </Button>
       </Card>
 

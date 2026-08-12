@@ -15,7 +15,9 @@ focused on a phone app and the official website.
    PhotoKit and Vision. Images are never sent to a cloud image-analysis model.
 3. Confident results create or update a channel automatically; uncertain results
    enter a one-tap inbox.
-4. The stable public `/q/:slug` URL follows the latest accepted QR version.
+4. The stable public `/q/:slug/image` URL serves the latest accepted native QR
+   image and can be used directly as a website `<img src>` without future URL
+   changes. `/q/:slug` remains an optional human-facing page.
 5. To view channels on the website, scan its one-time QR with the app and confirm.
    The browser receives an HttpOnly cookie and can be revoked from the phone.
 

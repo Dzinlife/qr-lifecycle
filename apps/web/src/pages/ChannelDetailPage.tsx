@@ -47,9 +47,9 @@ export function ChannelDetailPage() {
   }, [channelId]);
 
   useEffect(load, [load]);
-  const copyPublicUrl = async () => {
+  const copyPublicImageUrl = async () => {
     if (!channel) return;
-    await navigator.clipboard.writeText(`${api.getApiOrigin()}/q/${channel.slug}`);
+    await navigator.clipboard.writeText(`${api.getApiOrigin()}/q/${channel.slug}/image`);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   };
@@ -69,6 +69,7 @@ export function ChannelDetailPage() {
 
   const status = getChannelStatus(channel);
   const publicUrl = `${api.getApiOrigin()}/q/${channel.slug}`;
+  const publicImageUrl = `${publicUrl}/image`;
 
   return (
     <div className="page">
@@ -76,11 +77,11 @@ export function ChannelDetailPage() {
       <PageHeading
         eyebrow="频道详情"
         title={channel.name}
-        description={publicUrl}
+        description={publicImageUrl}
         action={
           <div className="button-group">
-            <button className="button button--secondary" type="button" onClick={() => void copyPublicUrl()}>
-              {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "已复制" : "复制入口"}
+            <button className="button button--secondary" type="button" onClick={() => void copyPublicImageUrl()}>
+              {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "已复制" : "复制图片地址"}
             </button>
             <Link className="button button--primary" to={`/channels/${channel.id}/edit`}><Pencil size={16} /> 编辑</Link>
           </div>
@@ -96,7 +97,7 @@ export function ChannelDetailPage() {
           <div className={`qr-preview${channel.activeQrVersionId ? "" : " qr-preview--empty"}`}>
             {channel.activeQrVersionId ? (
               <img
-                src={`${api.getApiOrigin()}/q/${channel.slug}/image?v=${channel.activeQrVersionId}`}
+                src={publicImageUrl}
                 alt={`${channel.name} 当前二维码`}
               />
             ) : (

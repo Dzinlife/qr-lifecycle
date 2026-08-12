@@ -960,7 +960,7 @@ async function publicQrPage(env: Env, slug: string): Promise<Response> {
     ? `<p>建议在 <time datetime="${escapeHtml(channel.expires_at)}">${escapeHtml(channel.expires_at)}</time> 前使用</p>`
     : "";
   return new Response(
-    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><title>${title}</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f6f7f9;color:#202124}.card{max-width:30rem;padding:1.5rem;text-align:center;background:#fff;border-radius:1.25rem;box-shadow:0 8px 30px #0001}img{display:block;width:min(80vw,24rem);height:auto;margin:1rem auto;border-radius:.75rem}h1{font-size:1.35rem}</style></head><body><main class="card"><h1>${title}</h1><img src="/q/${encodeURIComponent(slug)}/image?v=${encodeURIComponent(channel.active_qr_version_id)}" alt="${title} 群二维码">${expires}<small>页面会自动刷新 · ${escapeHtml(env.PRODUCT_NAME)}</small></main></body></html>`,
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><title>${title}</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f6f7f9;color:#202124}.card{max-width:30rem;padding:1.5rem;text-align:center;background:#fff;border-radius:1.25rem;box-shadow:0 8px 30px #0001}img{display:block;width:min(80vw,24rem);height:auto;margin:1rem auto;border-radius:.75rem}h1{font-size:1.35rem}</style></head><body><main class="card"><h1>${title}</h1><img src="/q/${encodeURIComponent(slug)}/image" alt="${title} 群二维码">${expires}<small>页面会自动刷新 · ${escapeHtml(env.PRODUCT_NAME)}</small></main></body></html>`,
     {
       headers: {
         "content-type": "text/html; charset=utf-8",
@@ -979,19 +979,50 @@ async function publicQrImage(
   slug: string,
 ): Promise<Response> {
   const channel = await publicChannel(env, slug);
-  if (!channel?.object_key) return unavailablePage(env.PRODUCT_NAME);
+  if (!channel?.object_key) {
+    return new Response(null, {
+      status: 404,
+      headers: {
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+        "cross-origin-resource-policy": "cross-origin",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
   const object = await env.QR_BUCKET.get(channel.object_key);
-  if (!object) return unavailablePage(env.PRODUCT_NAME);
+  if (!object) {
+    return new Response(null, {
+      status: 404,
+      headers: {
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+        "cross-origin-resource-policy": "cross-origin",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
   if (request.headers.get("if-none-match") === object.httpEtag) {
     return new Response(null, {
       status: 304,
-      headers: { etag: object.httpEtag, "cache-control": "public, max-age=60" },
+      headers: {
+        etag: object.httpEtag,
+        "cache-control": "public, no-cache, must-revalidate",
+        "access-control-allow-origin": "*",
+        "cross-origin-resource-policy": "cross-origin",
+        "x-content-type-options": "nosniff",
+      },
     });
   }
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "public, max-age=60, stale-while-revalidate=300");
+  // This URL is intentionally stable while its R2 object changes. Browsers may
+  // retain bytes locally, but must validate the current ETag before displaying
+  // them so an embedded <img> never remains on an expired QR version.
+  headers.set("cache-control", "public, no-cache, must-revalidate");
+  headers.set("access-control-allow-origin", "*");
+  headers.set("cross-origin-resource-policy", "cross-origin");
   headers.set("x-content-type-options", "nosniff");
   return new Response(object.body, { headers });
 }

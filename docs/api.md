@@ -63,7 +63,10 @@ least 0.95 match confidence. Duplicate payloads do not create new QR versions.
 ## Public live code
 
 - `GET /q/:slug`
-- `GET /q/:slug/image`
+- `GET /q/:slug/image` — stable, cross-origin embeddable image URL that always
+  resolves to the current native group QR image. The URL never changes;
+  `Cache-Control: no-cache` and ETag validation prevent an old version from
+  remaining visible after the phone updates it.
 
 Unknown, disabled, or empty channels return a branded unavailable page without
 exposing private account state.

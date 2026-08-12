@@ -51,8 +51,8 @@ export function DashboardPage() {
   const healthy = (channels ?? []).filter((channel) => getChannelStatus(channel).tone === "success").length;
 
   const copyUrl = async (channel: Channel) => {
-    const publicUrl = `${api.getApiOrigin()}/q/${channel.slug}`;
-    await navigator.clipboard.writeText(publicUrl);
+    const imageUrl = `${api.getApiOrigin()}/q/${channel.slug}/image`;
+    await navigator.clipboard.writeText(imageUrl);
     setCopiedId(channel.id);
     window.setTimeout(() => setCopiedId(null), 1_600);
   };
@@ -62,7 +62,7 @@ export function DashboardPage() {
       <PageHeading
         eyebrow="社群入口"
         title="频道状态"
-        description="群码由手机 App 从相册自动发现；这里用于查看状态、复制入口和纠错。"
+        description="群码由手机 App 从相册自动发现；复制固定图片地址挂到网站，更新后 URL 不变。"
       />
 
       {channels && channels.length > 0 ? (
@@ -111,7 +111,7 @@ export function DashboardPage() {
                   <div className="channel-card__body">
                     <span className="platform-label">{platform.label}</span>
                     <h3><Link to={`/channels/${channel.id}`}>{channel.name}</Link></h3>
-                    <p className="channel-card__slug">{api.getApiOrigin().replace(/^https?:\/\//, "")}/q/{channel.slug}</p>
+                    <p className="channel-card__slug">{api.getApiOrigin().replace(/^https?:\/\//, "")}/q/{channel.slug}/image</p>
                   </div>
                   <div className="channel-card__meta">
                     <Clock3 size={15} />
@@ -121,7 +121,7 @@ export function DashboardPage() {
                   <div className="channel-card__actions">
                     <button className="button button--ghost button--small" type="button" onClick={() => void copyUrl(channel)}>
                       {copiedId === channel.id ? <Check size={15} /> : <Copy size={15} />}
-                      {copiedId === channel.id ? "已复制" : "复制入口"}
+                      {copiedId === channel.id ? "已复制" : "复制图片地址"}
                     </button>
                     <Link className="button button--secondary button--small" to={`/channels/${channel.id}`}>
                       管理 <ArrowUpRight size={15} />
