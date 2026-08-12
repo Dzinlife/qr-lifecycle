@@ -70,7 +70,8 @@ function platformScore(candidate: QrCandidate): {
   platform: ChannelPlatform;
   score: number;
 } {
-  const text = `${candidate.payload}\n${textFor(candidate).join("\n")}`;
+  const ocrText = textFor(candidate).join("\n");
+  const text = `${candidate.payload}\n${ocrText}`;
   const scores: Record<Exclude<ChannelPlatform, "other">, number> = {
     wechat_group: 0,
     xiaohongshu_group: 0,
@@ -83,8 +84,11 @@ function platformScore(candidate: QrCandidate): {
   if (/(邀请你加入群聊|诚邀你加入群聊|该二维码.{0,12}有效)/u.test(text)) {
     scores.wechat_group += 0.17;
   }
-  if (/(xiaohongshu|xhslink\.com|小红书|REDnote|薯队长)/iu.test(text)) {
-    scores.xiaohongshu_group += 0.88;
+  if (/(xiaohongshu|xhslink\.com)/iu.test(candidate.payload)) {
+    scores.xiaohongshu_group += 0.93;
+  }
+  if (/(小红书|REDnote|薯队长)/iu.test(ocrText)) {
+    scores.xiaohongshu_group += 0.06;
   }
   if (/(discord\.gg|discord\.com\/invite|discord|you.?ve been invited to join)/iu.test(text)) {
     scores.discord += 0.92;
@@ -150,6 +154,17 @@ function inferName(
   lines: string[],
   platform: ChannelPlatform,
 ): { name: string | null; score: number } {
+  if (platform === "xiaohongshu_group") {
+    for (const line of lines) {
+      const titleWithMemberCount = /^(.{2,120}?)\s*[（(]\s*\d+\s*[）)]\s*$/u.exec(line)?.[1];
+      if (!titleWithMemberCount) continue;
+      const cleaned = cleanPlatformName(titleWithMemberCount, platform);
+      if (cleaned && !BOILERPLATE_PATTERNS.some((pattern) => pattern.test(cleaned))) {
+        return { name: cleaned, score: 0.97 };
+      }
+    }
+  }
+
   const captured = explicitName(lines, platform);
   if (captured) return { name: captured, score: 0.95 };
 

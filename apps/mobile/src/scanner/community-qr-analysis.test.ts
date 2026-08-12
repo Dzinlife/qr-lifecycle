@@ -99,6 +99,8 @@ test("extracts the Xiaohongshu English template from the real Scripod image", ()
 
   assert.equal(result.platform, "xiaohongshu_group");
   assert.equal(result.name, "Scripod");
+  assert.ok((result.fieldConfidences?.platform ?? 0) >= 0.95);
+  assert.ok((result.fieldConfidences?.name ?? 0) >= 0.95);
   assert.equal(result.expirySource, "explicit");
   assert.equal(result.expiresAt, new Date(2026, 8, 9, 23, 59).toISOString());
 });
