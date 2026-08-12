@@ -118,6 +118,12 @@ export const fieldConfidencesSchema = z.object({
   expiresAt: confidenceScoreSchema,
 });
 
+const deviceCreationTimeSchema = z
+  .number()
+  .finite()
+  .nonnegative()
+  .transform((value) => Math.trunc(value));
+
 /**
  * Structured, on-device recognition output. `imageUri` is deliberately absent:
  * it is a device-local handle and must never be serialized as detection metadata.
@@ -126,7 +132,7 @@ export const detectedCommunityQrSchema = z.object({
   clientDetectionId: z.string().uuid(),
   assetId: z.string().min(1).max(512),
   capturedAt: z.string().datetime().nullable(),
-  creationTime: z.number().int().nonnegative().nullable(),
+  creationTime: deviceCreationTimeSchema.nullable(),
   decodedPayload: z.string().min(1).max(8_192),
   ocrLines: z.array(ocrLineSchema).max(200),
   platform: channelPlatformSchema.nullable(),

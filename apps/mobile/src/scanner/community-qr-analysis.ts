@@ -345,6 +345,9 @@ export function toDetectedCommunityQr(
   options: AnalyzeQrOptions = {},
 ): DetectedCommunityQr {
   const enriched = enrichQrCandidate(candidate, channels, options);
+  const creationTime = enriched.creationTime === null
+    ? null
+    : Math.trunc(enriched.creationTime);
   const fieldConfidences: FieldConfidences = enriched.fieldConfidences ?? {
     platform: 0,
     name: 0,
@@ -354,10 +357,10 @@ export function toDetectedCommunityQr(
     clientDetectionId: clientDetectionId(enriched),
     assetId: enriched.assetId,
     capturedAt:
-      enriched.creationTime === null
+      creationTime === null
         ? null
-        : new Date(enriched.creationTime).toISOString(),
-    creationTime: enriched.creationTime,
+        : new Date(creationTime).toISOString(),
+    creationTime,
     decodedPayload: enriched.payload,
     ocrLines: enriched.ocrLines ?? [],
     platform: enriched.platform ?? null,

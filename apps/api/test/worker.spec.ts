@@ -287,16 +287,21 @@ describe.sequential("QR Lifecycle Worker", () => {
     const clientDetectionId = crypto.randomUUID();
     const first = await commitDetectionFor(
       token,
-      detectionForm({ clientDetectionId, name: "微信产品交流群" }),
+      detectionForm({
+        clientDetectionId,
+        name: "微信产品交流群",
+        creationTime: 1_786_496_400_000.875,
+      }),
     );
     expect(first.status).toBe(200);
     const body = await first.json<{
-      detection: { id: string; action: string; status: string };
+      detection: { id: string; action: string; status: string; creationTime: number };
       decision: { action: string; automatic: boolean };
       channel: { id: string; slug: string; disabledAt: string | null };
       qrVersion: { id: string };
     }>();
     expect(body.decision).toMatchObject({ action: "auto_create", automatic: true });
+    expect(body.detection.creationTime).toBe(1_786_496_400_000);
     expect(body.channel.slug).toMatch(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u);
     expect(body.channel.disabledAt).toBeNull();
     autoCreatedDetectionId = body.detection.id;

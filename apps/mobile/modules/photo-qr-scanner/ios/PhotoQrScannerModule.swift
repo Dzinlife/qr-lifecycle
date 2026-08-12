@@ -95,7 +95,9 @@ private final class PhotoQrScanWorker {
     var idsAtMaxCreationTime = seenAssetIds
 
     for asset in assets {
-      let creationTime = asset.creationDate.map { $0.timeIntervalSince1970 * 1_000 }
+      let creationTime = asset.creationDate.map {
+        ($0.timeIntervalSince1970 * 1_000).rounded(.towardZero)
+      }
       if let lastCreationTime,
          let creationTime,
          creationTime <= lastCreationTime,

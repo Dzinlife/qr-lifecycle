@@ -135,6 +135,7 @@ test("suggests one same-name channel but rejects an ambiguous duplicate", () => 
 
 test("builds stable flattened detection metadata without a local image URI", () => {
   const input = candidate({
+    creationTime: CAPTURED_AT + 0.875,
     payload: "https://discord.gg/fallinlife",
     ocrLines: ocr("You've been invited to join", "Fallinlife Builders"),
   });
@@ -146,4 +147,5 @@ test("builds stable flattened detection metadata without a local image URI", () 
   assert.equal(first.decodedPayload, input.payload);
   assert.equal("imageUri" in first, false);
   assert.equal(first.capturedAt, "2026-08-12T04:00:00.000Z");
+  assert.equal(first.creationTime, CAPTURED_AT);
 });
