@@ -16,6 +16,7 @@ import { File, Paths } from "expo-file-system";
 import type { Channel, ChannelPlatform, QrVersion } from "@qr-lifecycle/contracts";
 
 import {
+  deleteChannel,
   getChannel,
   listQrVersions,
   updateChannelExpiry,
@@ -72,6 +73,8 @@ export default function ChannelDetailScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [entryError, setEntryError] = useState<string | null>(null);
   const [sharingRelay, setSharingRelay] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!session || !channelId) return;
@@ -157,6 +160,33 @@ export default function ChannelDetailScreen() {
     } finally {
       setSharingRelay(false);
     }
+  };
+
+  const performDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteChannel(session, channel.id);
+      router.replace("/channels");
+    } catch (caught) {
+      setDeleteError(humanizeError(caught));
+      setDeleting(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    Alert.alert(
+      `删除“${channel.name}”？`,
+      "永久中转码、固定图片地址和识别历史都会停止使用，此操作无法在 App 中恢复。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除频道",
+          style: "destructive",
+          onPress: () => void performDelete(),
+        },
+      ],
+    );
   };
 
   return (
@@ -264,11 +294,24 @@ export default function ChannelDetailScreen() {
           {saving ? "正在保存…" : "保存修正"}
         </Button>
       </Card>
+
+      <Card style={styles.dangerCard}>
+        <Text style={styles.dangerHeading}>删除频道</Text>
+        <Text style={textStyles.muted}>
+          删除后，已经发布的永久中转码和固定图片地址会立即失效。
+        </Text>
+        {deleteError ? <Notice tone="danger">{deleteError}</Notice> : null}
+        <Button disabled={deleting} tone="danger" onPress={confirmDelete}>
+          {deleting ? "正在删除…" : "删除这个频道"}
+        </Button>
+      </Card>
     </NavigationDetailScreen>
   );
 }
 
 const styles = StyleSheet.create({
+  dangerCard: { borderColor: "rgba(164, 56, 42, 0.28)" },
+  dangerHeading: { color: colors.danger, fontSize: 19, fontWeight: "700" },
   header: { gap: 5, marginBottom: 4 },
   link: { color: colors.primary, fontSize: 14, lineHeight: 20 },
   qrPreview: {

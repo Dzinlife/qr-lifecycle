@@ -52,7 +52,8 @@ export default function ChannelsScreen() {
     if (!silent) refresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
-      setChannels(await listChannels(session));
+      const nextChannels = await listChannels(session);
+      setChannels(nextChannels.filter((channel) => channel.disabledAt === null));
     } catch (caught) {
       setError(humanizeError(caught));
     } finally {

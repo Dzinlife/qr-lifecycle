@@ -137,6 +137,18 @@ export async function getChannel(session: MobileSession, channelId: string): Pro
   return "channel" in raw ? raw.channel : raw;
 }
 
+export async function deleteChannel(
+  session: MobileSession,
+  channelId: string,
+): Promise<void> {
+  await request(
+    session.deployment.apiOrigin,
+    `/channels/${encodeURIComponent(channelId)}`,
+    { method: "DELETE" },
+    session.token,
+  );
+}
+
 export async function listQrVersions(
   session: MobileSession,
   channelId: string,
