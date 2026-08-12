@@ -69,7 +69,7 @@ export default function SettingsScreen() {
       <Card>
         <Text style={textStyles.heading}>官方网站</Text>
         <Text style={textStyles.muted}>
-          在电脑打开官网并显示绑定码，然后用这台手机扫码确认。无需注册或输入密码。
+          在电脑打开官网并显示绑定码，用这台手机扫描后会自动完成绑定。无需注册或输入密码。
         </Text>
         <Button onPress={() => router.push("/web-bind")}>扫描网站绑定码</Button>
         {sessionsError ? <Notice tone="danger">{sessionsError}</Notice> : null}

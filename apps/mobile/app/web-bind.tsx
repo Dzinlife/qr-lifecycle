@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Linking, StyleSheet, Text, View } from "react-native";
 import {
   CameraView,
@@ -16,38 +16,39 @@ export default function WebBindScreen() {
   const router = useRouter();
   const { hydrated, session } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
+  const scanLocked = useRef(false);
   const [binding, setBinding] = useState<WebBindingQr | null>(null);
   const [invalidQr, setInvalidQr] = useState(false);
   const [approving, setApproving] = useState(false);
-  const [approved, setApproved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
 
+  const connect = async (target: WebBindingQr) => {
+    scanLocked.current = true;
+    setBinding(target);
+    setInvalidQr(false);
+    setApproving(true);
+    setError(null);
+    try {
+      await approveWebBinding(session, target.bindingId, target.challenge);
+      router.replace("/settings");
+    } catch (caught) {
+      setError(humanizeError(caught));
+      setApproving(false);
+    }
+  };
+
   const scanned = ({ data }: BarcodeScanningResult) => {
+    if (scanLocked.current) return;
     const parsed = parseWebBindingQr(data);
     if (!parsed) {
       setInvalidQr(true);
       return;
     }
-    setInvalidQr(false);
-    setError(null);
-    setBinding(parsed);
-  };
 
-  const approve = async () => {
-    if (!binding) return;
-    setApproving(true);
-    setError(null);
-    try {
-      await approveWebBinding(session, binding.bindingId, binding.challenge);
-      setApproved(true);
-    } catch (caught) {
-      setError(humanizeError(caught));
-    } finally {
-      setApproving(false);
-    }
+    void connect(parsed);
   };
 
   if (!permission) {
@@ -72,32 +73,20 @@ export default function WebBindScreen() {
     );
   }
 
-  if (approved) {
-    return (
-      <Screen>
-        <Card>
-          <Notice tone="success">网站已获授权，可以查看这台手机创建的群码。</Notice>
-          <Text style={textStyles.muted}>浏览器会自行完成绑定；此二维码不能再次使用。</Text>
-          <Button onPress={() => router.replace("/settings")}>完成</Button>
-        </Card>
-      </Screen>
-    );
-  }
-
   return (
     <Screen>
       <View style={styles.intro}>
         <Text style={textStyles.heading}>扫描官网上的二维码</Text>
         <Text style={textStyles.muted}>
-          扫到后还需要你确认。陌生网页无法在后台自动获得访问权限。
+          识别到有效的一次性绑定码后会自动连接，无需再次确认。
         </Text>
       </View>
 
       <View style={styles.cameraFrame}>
         <CameraView
-          active={!binding}
+          active={!binding && !approving}
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-          onBarcodeScanned={binding ? undefined : scanned}
+          onBarcodeScanned={binding || approving ? undefined : scanned}
           style={StyleSheet.absoluteFill}
         />
         <View pointerEvents="none" style={styles.guide} />
@@ -106,26 +95,26 @@ export default function WebBindScreen() {
       {invalidQr && !binding ? (
         <Notice tone="danger">这不是 fallinlife 官网生成的绑定二维码。</Notice>
       ) : null}
-      {error ? <Notice tone="danger">{error}</Notice> : null}
-
-      {binding ? (
+      {binding && approving ? (
         <Card>
-          <Text style={textStyles.heading}>允许这个浏览器查看群码？</Text>
-          <Text style={textStyles.muted}>
-            授权仅用于查看和辅助管理当前手机账号下的频道，可随时在设置中撤销。
-          </Text>
-          <Button disabled={approving} onPress={() => void approve()}>
-            {approving ? "正在授权…" : "确认授权"}
-          </Button>
+          <Notice tone="success">已识别，正在连接浏览器…</Notice>
+        </Card>
+      ) : null}
+
+      {binding && error ? (
+        <Card>
+          <Notice tone="danger">{error}</Notice>
+          <Button onPress={() => void connect(binding)}>重试连接</Button>
           <Button
-            disabled={approving}
             tone="secondary"
             onPress={() => {
+              scanLocked.current = false;
               setBinding(null);
               setError(null);
+              setInvalidQr(false);
             }}
           >
-            取消，重新扫描
+            重新扫描
           </Button>
         </Card>
       ) : null}

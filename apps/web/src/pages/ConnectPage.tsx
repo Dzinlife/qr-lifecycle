@@ -102,14 +102,14 @@ export function ConnectPage({
           </p>
           <div className="auth-features">
             <span><ShieldCheck size={14} /> 一次性绑定码</span>
-            <span><Smartphone size={14} /> 手机确认授权</span>
+            <span><Smartphone size={14} /> 手机扫码授权</span>
             <span><Check size={14} /> 随时在 App 撤销</span>
           </div>
         </div>
         <div className="auth-flow" aria-hidden="true">
           <span className="auth-flow__node auth-flow__node--active"><span>01</span> 官网显示二维码</span>
           <i className="auth-flow__line" />
-          <span className="auth-flow__node"><span>02</span> 手机扫码确认</span>
+          <span className="auth-flow__node"><span>02</span> 手机扫码绑定</span>
           <i className="auth-flow__line" />
           <span className="auth-flow__node"><span>03</span> 浏览器安全 Cookie</span>
         </div>
@@ -122,7 +122,7 @@ export function ConnectPage({
             <div><p className="eyebrow">连接手机</p><h2>用 Fallinlife 扫码</h2></div>
           </div>
           <p className="auth-card__intro">
-            打开 App「设置 → 扫描网站绑定码」，扫码后在手机上确认。
+            打开 App「设置 → 扫描网站绑定码」，扫描后会自动完成绑定。
           </p>
 
           <div className="connect-qr" aria-live="polite">
@@ -135,8 +135,8 @@ export function ConnectPage({
             )}
           </div>
 
-          {phase === "waiting" ? <p className="connect-status"><LoaderCircle className="spin" size={14} /> 等待手机确认…</p> : null}
-          {phase === "approved" ? <p className="connect-status connect-status--success"><Check size={14} /> 已确认，正在进入…</p> : null}
+          {phase === "waiting" ? <p className="connect-status"><LoaderCircle className="spin" size={14} /> 等待手机扫描…</p> : null}
+          {phase === "approved" ? <p className="connect-status connect-status--success"><Check size={14} /> 已绑定，正在进入…</p> : null}
           {phase === "expired" ? <p className="form-error">二维码已过期，请刷新后重新扫描。</p> : null}
           {phase === "error" ? <p className="form-error">{error}</p> : null}
           {phase === "expired" || phase === "error" ? (
