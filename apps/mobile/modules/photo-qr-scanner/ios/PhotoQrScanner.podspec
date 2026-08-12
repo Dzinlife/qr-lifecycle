@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Local PhotoKit and Vision QR scanner for QR Lifecycle'
   s.description    = 'Scans newly inserted photo assets for QR codes on-device.'
   s.author         = 'QR Lifecycle contributors'
-  s.homepage       = 'https://github.com/dzinlife/qr-lifecycle'
+  s.homepage       = 'https://github.com/fallinlife/qr-lifecycle'
   s.platforms      = { :ios => '16.4' }
   s.source         = { git: '' }
   s.static_framework = true

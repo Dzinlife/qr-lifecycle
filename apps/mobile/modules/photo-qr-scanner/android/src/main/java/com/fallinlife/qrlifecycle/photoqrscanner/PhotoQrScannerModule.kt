@@ -1,4 +1,4 @@
-package com.dzinlife.qrlifecycle.photoqrscanner
+package com.fallinlife.qrlifecycle.photoqrscanner
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition

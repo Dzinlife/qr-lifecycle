@@ -32,9 +32,9 @@ The MVP vertical slice is implemented:
   explicitly deferred rather than silently falling back.
 
 The staging Worker and web app are live at
-<https://qr-lifecycle-staging.dzinlife.workers.dev>. It is intentionally kept
-separate from production. Physical-iPhone signing, the production APNs
-credential, and App Store delivery are the next milestone.
+<https://qr-lifecycle-staging.fallinlife.com>. It is intentionally separate
+from production. Physical-iPhone signing and App Store delivery are the next
+milestone.
 
 ## Development
 

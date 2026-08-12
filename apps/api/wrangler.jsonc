@@ -17,9 +17,9 @@
     "REGISTRATION_ENABLED": false,
     "CORS_ORIGINS": "*",
     "APNS_ENVIRONMENT": "production",
-    "APNS_KEY_ID": "",
-    "APNS_TEAM_ID": "",
-    "APNS_TOPIC": ""
+    "APNS_KEY_ID": "9S5QHBG7RU",
+    "APNS_TEAM_ID": "33CUSDD2Y6",
+    "APNS_TOPIC": "com.fallinlife.qrlifecycle"
   },
   "d1_databases": [
     {
@@ -40,15 +40,21 @@
   "env": {
     "staging": {
       "name": "qr-lifecycle-staging",
+      "routes": [
+        {
+          "pattern": "qr-lifecycle-staging.fallinlife.com",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "DEPLOYMENT_MODE": "self_hosted",
         "PRODUCT_NAME": "QR Lifecycle",
         "REGISTRATION_ENABLED": false,
         "CORS_ORIGINS": "*",
-        "APNS_ENVIRONMENT": "production",
-        "APNS_KEY_ID": "",
-        "APNS_TEAM_ID": "",
-        "APNS_TOPIC": ""
+        "APNS_ENVIRONMENT": "sandbox",
+        "APNS_KEY_ID": "2CR4ZD55RN",
+        "APNS_TEAM_ID": "33CUSDD2Y6",
+        "APNS_TOPIC": "com.fallinlife.qrlifecycle"
       },
       "d1_databases": [
         {

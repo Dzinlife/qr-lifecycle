@@ -16,7 +16,7 @@ pnpm --filter @qr-lifecycle/mobile ios
 `native:generate` generates `ios/` and `android/` locally; neither directory is
 committed. Native module changes require rebuilding the development client.
 
-The provisional App ID is `com.dzinlife.qrlifecycle`. The backend APNs topic
+The provisional App ID is `com.fallinlife.qrlifecycle`. The backend APNs topic
 and the signed app's Bundle ID must stay identical if that identifier changes.
 
 ## Photo scanning behavior

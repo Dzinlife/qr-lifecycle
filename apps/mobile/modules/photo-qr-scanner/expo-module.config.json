@@ -4,6 +4,6 @@
     "modules": ["PhotoQrScannerModule"]
   },
   "android": {
-    "modules": ["com.dzinlife.qrlifecycle.photoqrscanner.PhotoQrScannerModule"]
+    "modules": ["com.fallinlife.qrlifecycle.photoqrscanner.PhotoQrScannerModule"]
   }
 }

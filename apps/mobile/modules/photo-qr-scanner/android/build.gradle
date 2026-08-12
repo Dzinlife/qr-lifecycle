@@ -3,11 +3,11 @@ plugins {
   id 'expo-module-gradle-plugin'
 }
 
-group = 'com.dzinlife.qrlifecycle.photoqrscanner'
+group = 'com.fallinlife.qrlifecycle.photoqrscanner'
 version = '0.1.0'
 
 android {
-  namespace "com.dzinlife.qrlifecycle.photoqrscanner"
+  namespace "com.fallinlife.qrlifecycle.photoqrscanner"
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
