@@ -33,7 +33,10 @@ export default function WebBindScreen() {
     setError(null);
     try {
       await approveWebBinding(session, target.bindingId, target.challenge);
-      router.replace("/settings");
+      router.dismissTo({
+        pathname: "/settings",
+        params: { bindingApprovedAt: Date.now().toString() },
+      });
     } catch (caught) {
       setError(humanizeError(caught));
       setApproving(false);

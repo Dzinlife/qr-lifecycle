@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Linking, StyleSheet, Text, View } from "react-native";
-import { Redirect, useRouter } from "expo-router";
+import {
+  Redirect,
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter,
+} from "expo-router";
 
 import type { WebSession } from "@qr-lifecycle/contracts";
 
@@ -21,12 +26,14 @@ import {
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { bindingApprovedAt } = useLocalSearchParams<{ bindingApprovedAt?: string }>();
   const { hydrated, session, setDeviceId, disconnect } = useApp();
   const [pushState, setPushState] = useState<PushRegistrationState | null>(null);
   const [enablingPush, setEnablingPush] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [webSessions, setWebSessions] = useState<WebSession[]>([]);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [bindingStatusVisible, setBindingStatusVisible] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const refreshWebSessions = useCallback(async () => {
@@ -39,9 +46,33 @@ export default function SettingsScreen() {
     }
   }, [session]);
 
-  useEffect(() => {
-    void refreshWebSessions();
-  }, [refreshWebSessions]);
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    const refresh = () => {
+      if (!cancelled) void refreshWebSessions();
+    };
+
+    refresh();
+    if (!bindingApprovedAt) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setBindingStatusVisible(true);
+    const retryTimers = [1_200, 3_000, 5_000].map((delay) => setTimeout(refresh, delay));
+    const finishTimer = setTimeout(() => {
+      if (cancelled) return;
+      setBindingStatusVisible(false);
+      router.setParams({ bindingApprovedAt: undefined });
+    }, 5_500);
+
+    return () => {
+      cancelled = true;
+      retryTimers.forEach(clearTimeout);
+      clearTimeout(finishTimer);
+    };
+  }, [bindingApprovedAt, refreshWebSessions, router]));
 
   if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
@@ -72,7 +103,13 @@ export default function SettingsScreen() {
           在电脑打开官网并显示绑定码，用这台手机扫描后会自动完成绑定。无需注册或输入密码。
         </Text>
         <Button onPress={() => router.push("/web-bind")}>扫描网站绑定码</Button>
+        {bindingStatusVisible ? (
+          <Notice tone="success">绑定码已授权，正在同步浏览器状态…</Notice>
+        ) : null}
         {sessionsError ? <Notice tone="danger">{sessionsError}</Notice> : null}
+        {!bindingStatusVisible && !sessionsError && webSessions.length === 0 ? (
+          <Text style={textStyles.muted}>尚未绑定浏览器。</Text>
+        ) : null}
         {webSessions.map((webSession) => (
           <View key={webSession.id} style={styles.webSession}>
             <View style={styles.webSessionCopy}>
