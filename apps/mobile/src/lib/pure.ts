@@ -43,6 +43,12 @@ export function normalizePairingCode(input: string): string {
   return input.trim().replace(/\s+/g, "").toUpperCase();
 }
 
+export function isValidPairingCode(input: string): boolean {
+  return /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{10}$/u.test(
+    normalizePairingCode(input),
+  );
+}
+
 export function parsePairPayload(value: unknown): PairPayload {
   if (!isRecord(value)) throw new Error("配对响应格式不正确");
 

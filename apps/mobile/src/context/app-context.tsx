@@ -9,7 +9,11 @@ import {
 } from "react";
 
 import { pairDeployment, unregisterDevice } from "@/api/client";
-import { normalizeApiOrigin, normalizePairingCode } from "@/lib/pure";
+import {
+  isValidPairingCode,
+  normalizeApiOrigin,
+  normalizePairingCode,
+} from "@/lib/pure";
 import {
   clearSession,
   loadSession,
@@ -48,7 +52,9 @@ export function AppProvider({ children }: PropsWithChildren) {
   const pair = useCallback(async (originInput: string, codeInput: string) => {
     const origin = normalizeApiOrigin(originInput);
     const code = normalizePairingCode(codeInput);
-    if (!code) throw new Error("请输入配对码");
+    if (!isValidPairingCode(code)) {
+      throw new Error("请输入网页“连接手机”页面生成的 10 位一次性配对码，不要填写恢复码");
+    }
     const paired = await pairDeployment(origin, code);
     const next: MobileSession = {
       token: paired.sessionToken,

@@ -72,11 +72,12 @@ export default function PairScreen() {
               onChangeText={setCode}
               placeholder="网页端显示的 10 分钟配对码"
               returnKeyType="done"
-              secureTextEntry
               style={styles.input}
+              textContentType="oneTimeCode"
               value={code}
               onSubmitEditing={() => void submit()}
             />
+            <Text style={textStyles.muted}>只填写 Web“连接手机”页面生成的 10 位代码，不要填写登录恢复码。</Text>
           </View>
           {error ? <Notice tone="danger">{error}</Notice> : null}
           <Button disabled={submitting || !origin.trim() || !code.trim()} onPress={() => void submit()}>

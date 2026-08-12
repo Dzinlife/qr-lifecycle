@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "appleTeamId": "33CUSDD2Y6",
+      "buildNumber": "2",
       "bundleIdentifier": "com.fallinlife.qrlifecycle",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "用于识别你保存到相册中的最新群二维码。二维码识别完全在设备上完成。"

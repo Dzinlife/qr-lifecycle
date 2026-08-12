@@ -114,7 +114,7 @@ export function PairingPage() {
           <p className="eyebrow">连接步骤</p>
           <ol>
             <li><span>1</span><div><strong>打开续码 App</strong><p>在欢迎页面选择“连接已有部署”。</p></div></li>
-            <li><span>2</span><div><strong>输入配对码</strong><p>App 会自动取得 API 地址，不需要手动复制服务器 URL。</p></div></li>
+            <li><span>2</span><div><strong>填写部署地址与配对码</strong><p>部署地址是 {window.location.origin}，配对码只填写上方显示的 10 位代码。</p></div></li>
             <li><span>3</span><div><strong>允许相册与通知</strong><p>相册识别在手机本地完成，服务器只接收你确认更新的图片。</p></div></li>
           </ol>
           <div className="pairing-security"><LockKeyhole size={17} /><p><strong>一次性凭证</strong><br />配对码不会出现在日志中，也不能重复使用。</p></div>

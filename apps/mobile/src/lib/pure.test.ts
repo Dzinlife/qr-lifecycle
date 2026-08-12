@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isValidPairingCode,
   normalizeApiOrigin,
   normalizePairingCode,
   notificationChannelId,
@@ -11,6 +12,8 @@ import {
 test("normalizes a deployment host and pairing code", () => {
   assert.equal(normalizeApiOrigin(" example.workers.dev/path "), "https://example.workers.dev");
   assert.equal(normalizePairingCode(" ab 12-cd "), "AB12-CD");
+  assert.equal(isValidPairingCode(" 23456 ABCDE "), true);
+  assert.equal(isValidPairingCode("a recovery code that is much too long"), false);
 });
 
 test("rejects insecure remote deployment addresses", () => {

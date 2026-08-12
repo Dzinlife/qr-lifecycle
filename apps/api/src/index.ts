@@ -717,9 +717,15 @@ async function createPairingCode(request: Request, env: Env): Promise<Response> 
 
 async function pair(request: Request, env: Env): Promise<Response> {
   const body = record(await readJson(request));
-  const code = optionalTrimmedString(body.code, "", 32).toUpperCase();
+  const code = typeof body.code === "string"
+    ? body.code.trim().replace(/\s+/gu, "").toUpperCase()
+    : "";
   if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{10}$/u.test(code)) {
-    throw new HttpError(400, "invalid_pairing_code", "Pairing code is invalid");
+    throw new HttpError(
+      400,
+      "invalid_pairing_code",
+      "Pairing code must be the 10-character code from the web dashboard",
+    );
   }
   const pairing = await env.DB.prepare(
     `SELECT id, tenant_id, user_id, expires_at, consumed_at

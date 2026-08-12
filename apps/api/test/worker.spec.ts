@@ -178,6 +178,16 @@ describe.sequential("QR Lifecycle Worker", () => {
   });
 
   it("pairs a mobile session once and registers an APNs device", async () => {
+    const invalid = await fetchApi("/api/v1/pair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "this-is-a-recovery-code-and-not-a-pairing-code" }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({
+      error: { code: "invalid_pairing_code" },
+    });
+
     const pairingResponse = await fetchApi("/api/v1/pairing-codes", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
