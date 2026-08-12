@@ -128,6 +128,8 @@ export interface ScanResult {
   candidates: QrCandidate[];
   cursor: ScanCursor;
   hasIncrementalChanges: boolean;
+  observedAssetCount?: number;
+  scannedAssetCount?: number;
 }
 
 export const confidenceScoreSchema = z.number().min(0).max(1);

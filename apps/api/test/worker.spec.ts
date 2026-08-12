@@ -49,40 +49,46 @@ function mobileHeaders(token: string, json = false): HeadersInit {
   };
 }
 
-function detectionForm(
-  overrides: Record<string, unknown> = {},
-  imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
-): FormData {
-  const form = new FormData();
-  form.set(
-    "metadata",
-    JSON.stringify({
-      clientDetectionId: crypto.randomUUID(),
-      assetId: `asset-${crypto.randomUUID()}`,
-      capturedAt: "2026-08-12T01:00:00.000Z",
-      creationTime: 1_786_496_400_000,
-      decodedPayload: `https://example.test/invite/${crypto.randomUUID()}`,
-      ocrLines: [{ text: "创作者交流群", confidence: 0.99 }],
-      platform: "wechat_group",
-      name: "创作者交流群",
-      expiresAt: "2026-08-19T01:00:00.000Z",
-      expirySource: "relative",
-      fieldConfidences: { platform: 0.98, name: 0.99, expiresAt: 0.91 },
-      suggestedChannelId: null,
-      matchConfidence: 0,
-      ...overrides,
-    }),
-  );
-  form.set("image", new File([imageBytes], "qr.png", { type: "image/png" }));
-  return form;
+function detectionMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    clientDetectionId: crypto.randomUUID(),
+    assetId: `asset-${crypto.randomUUID()}`,
+    capturedAt: "2026-08-12T01:00:00.000Z",
+    creationTime: 1_786_496_400_000,
+    decodedPayload: `https://example.test/invite/${crypto.randomUUID()}`,
+    ocrLines: [{ text: "创作者交流群", confidence: 0.99 }],
+    platform: "wechat_group",
+    name: "创作者交流群",
+    expiresAt: "2026-08-19T01:00:00.000Z",
+    expirySource: "relative",
+    fieldConfidences: { platform: 0.98, name: 0.99, expiresAt: 0.91 },
+    suggestedChannelId: null,
+    matchConfidence: 0,
+    ...overrides,
+  };
 }
 
-async function commitDetectionFor(token: string, form: FormData): Promise<Response> {
+async function commitDetectionFor(
+  token: string,
+  metadata: Record<string, unknown>,
+): Promise<Response> {
   return fetchApi("/api/v1/detections/commit", {
     method: "POST",
-    headers: mobileHeaders(token),
-    body: form,
+    headers: mobileHeaders(token, true),
+    body: JSON.stringify(metadata),
   });
+}
+
+function confirmationForm(input: Record<string, unknown> = {}): FormData {
+  const form = new FormData();
+  form.set("input", JSON.stringify(input));
+  form.set(
+    "image",
+    new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "qr.png", {
+      type: "image/png",
+    }),
+  );
+  return form;
 }
 
 describe.sequential("Fallinlife official Worker", () => {
@@ -358,29 +364,34 @@ describe.sequential("Fallinlife official Worker", () => {
     expect(result).toMatchObject({ scanned: 1, sent: 1, failed: 0 });
   });
 
-  it("auto-creates detections idempotently and enforces cross-account undo isolation", async () => {
+  it("queues every detection until confirmation and keeps commits idempotent", async () => {
     const clientDetectionId = crypto.randomUUID();
     const first = await commitDetectionFor(
       mobile.token,
-      detectionForm({ clientDetectionId, name: "微信产品交流群", creationTime: 1_786_496_400_000.875 }),
+      detectionMetadata({
+        clientDetectionId,
+        name: "微信产品交流群",
+        creationTime: 1_786_496_400_000.875,
+      }),
     );
     expect(first.status).toBe(200);
     const body = await first.json<{
       detection: { id: string; creationTime: number };
       decision: { action: string; automatic: boolean };
-      channel: { id: string; slug: string; disabledAt: string | null };
-      qrVersion: { id: string };
+      channel: null;
+      qrVersion: null;
     }>();
-    expect(body.decision).toMatchObject({ action: "auto_create", automatic: true });
+    expect(body.decision).toMatchObject({ action: "needs_review", automatic: false });
     expect(body.detection.creationTime).toBe(1_786_496_400_000);
-    expect(body.channel.slug).toMatch(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u);
+    expect(body.channel).toBeNull();
+    expect(body.qrVersion).toBeNull();
 
     const objectCount = (
       await env.QR_BUCKET.list({ prefix: `accounts/${mobile.accountId}/` })
     ).objects.length;
     const repeated = await commitDetectionFor(
       mobile.token,
-      detectionForm({
+      detectionMetadata({
         clientDetectionId,
         assetId: "changed-on-retry",
         decodedPayload: "https://example.test/invite/changed-on-retry",
@@ -388,12 +399,34 @@ describe.sequential("Fallinlife official Worker", () => {
     );
     expect(await repeated.json()).toMatchObject({
       detection: { id: body.detection.id },
-      channel: { id: body.channel.id },
-      qrVersion: { id: body.qrVersion.id },
+      decision: { action: "needs_review", automatic: false },
+      channel: null,
+      qrVersion: null,
     });
     expect(
       (await env.QR_BUCKET.list({ prefix: `accounts/${mobile.accountId}/` })).objects,
     ).toHaveLength(objectCount);
+
+    const accepted = await fetchApi(`/api/v1/inbox/${body.detection.id}/accept`, {
+      method: "POST",
+      headers: mobileHeaders(mobile.token),
+      body: confirmationForm({
+        name: "微信产品交流群",
+        platform: "wechat_group",
+        createNew: true,
+      }),
+    });
+    const acceptedBody = await accepted.json<{
+      detection: { id: string };
+      channel: { id: string; slug: string };
+      qrVersion: { id: string };
+    }>();
+    expect(acceptedBody).toMatchObject({
+      detection: { id: body.detection.id },
+      channel: { id: expect.any(String), slug: expect.any(String) },
+      qrVersion: { id: expect.any(String) },
+    });
+    expect(acceptedBody.channel.slug).toMatch(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u);
 
     const crossAccount = await fetchApi(`/api/v1/detections/${body.detection.id}/undo`, {
       method: "POST",
@@ -407,14 +440,17 @@ describe.sequential("Fallinlife official Worker", () => {
     });
     expect(await undone.json()).toMatchObject({
       detection: { status: "undone", action: "undo" },
-      channel: { id: body.channel.id },
+      channel: { id: acceptedBody.channel.id },
     });
   });
 
   it("keeps uncertain detections in a private inbox and accepts them manually", async () => {
+    const objectsBeforeDetection = (
+      await env.QR_BUCKET.list({ prefix: `accounts/${mobile.accountId}/` })
+    ).objects.length;
     const response = await commitDetectionFor(
       mobile.token,
-      detectionForm({
+      detectionMetadata({
         name: null,
         platform: null,
         expiresAt: null,
@@ -427,6 +463,9 @@ describe.sequential("Fallinlife official Worker", () => {
       decision: { action: string };
     }>();
     expect(body.decision.action).toBe("needs_review");
+    expect(
+      (await env.QR_BUCKET.list({ prefix: `accounts/${mobile.accountId}/` })).objects,
+    ).toHaveLength(objectsBeforeDetection);
 
     const otherInbox = await fetchApi("/api/v1/inbox", {
       headers: mobileHeaders(otherMobile.token),
@@ -435,21 +474,24 @@ describe.sequential("Fallinlife official Worker", () => {
 
     const accepted = await fetchApi(`/api/v1/inbox/${body.detection.id}/accept`, {
       method: "POST",
-      headers: mobileHeaders(mobile.token, true),
-      body: JSON.stringify({ name: "手动确认群", platform: "other" }),
+      headers: mobileHeaders(mobile.token),
+      body: confirmationForm({ name: "手动确认群", platform: "other" }),
     });
     expect(await accepted.json()).toMatchObject({
       detection: { status: "committed", action: "accepted_create" },
       decision: { action: "accepted_create", automatic: false },
       channel: { name: "手动确认群", platform: "other" },
     });
+    expect(
+      (await env.QR_BUCKET.list({ prefix: `accounts/${mobile.accountId}/` })).objects,
+    ).toHaveLength(objectsBeforeDetection + 1);
   });
 
   it("marks the same payload as duplicate without storing a second QR version", async () => {
     const payload = "https://example.test/invite/repeatable";
     const first = await commitDetectionFor(
       mobile.token,
-      detectionForm({
+      detectionMetadata({
         name: "小红书交流群",
         platform: "xiaohongshu_group",
         suggestedChannelId: channelId,
@@ -457,13 +499,23 @@ describe.sequential("Fallinlife official Worker", () => {
         decodedPayload: payload,
       }),
     );
-    const firstBody = await first.json<{
+    const firstReview = await first.json<{
+      detection: { id: string };
+      decision: { action: string; automatic: boolean };
+    }>();
+    expect(firstReview.decision).toMatchObject({ action: "needs_review", automatic: false });
+    const firstAccepted = await fetchApi(`/api/v1/inbox/${firstReview.detection.id}/accept`, {
+      method: "POST",
+      headers: mobileHeaders(mobile.token),
+      body: confirmationForm({ channelId }),
+    });
+    const firstBody = await firstAccepted.json<{
       channel: { activeQrVersionId: string };
       qrVersion: { id: string };
     }>();
     const second = await commitDetectionFor(
       mobile.token,
-      detectionForm({
+      detectionMetadata({
         name: "小红书交流群",
         platform: "xiaohongshu_group",
         suggestedChannelId: channelId,
@@ -472,14 +524,24 @@ describe.sequential("Fallinlife official Worker", () => {
         assetId: "another-photo-of-the-same-code",
       }),
     );
-    const secondBody = await second.json<{
+    const secondReview = await second.json<{
+      detection: { id: string };
+      decision: { action: string; automatic: boolean };
+    }>();
+    expect(secondReview.decision).toMatchObject({ action: "needs_review", automatic: false });
+    const secondAccepted = await fetchApi(`/api/v1/inbox/${secondReview.detection.id}/accept`, {
+      method: "POST",
+      headers: mobileHeaders(mobile.token),
+      body: confirmationForm({ channelId }),
+    });
+    const secondBody = await secondAccepted.json<{
       detection: { id: string };
       decision: { action: string; automatic: boolean };
       channel: { activeQrVersionId: string };
       qrVersion: { id: string };
     }>();
     expect(secondBody).toMatchObject({
-      decision: { action: "duplicate", automatic: true },
+      decision: { action: "duplicate", automatic: false },
       channel: { activeQrVersionId: firstBody.channel.activeQrVersionId },
       qrVersion: { id: firstBody.qrVersion.id },
     });

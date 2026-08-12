@@ -40,17 +40,9 @@ function Navigation() {
         <Stack.Screen
           name="channels/[channelId]"
           options={{
-            headerBlurEffect: "systemThinMaterial",
-            headerLargeStyle: { backgroundColor: "transparent" },
-            headerShadowVisible: true,
+            headerShadowVisible: false,
             headerStyle: { backgroundColor: "transparent" },
             headerTransparent: true,
-            scrollEdgeEffects: {
-              bottom: "hidden",
-              left: "hidden",
-              right: "hidden",
-              top: "hidden",
-            },
             title: "群码详情",
           }}
         />

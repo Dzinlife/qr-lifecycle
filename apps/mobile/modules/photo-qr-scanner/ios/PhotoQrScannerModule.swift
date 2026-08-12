@@ -262,43 +262,39 @@ private final class PhotoQrScanWorker {
     limit: Int,
     onProgress: ([String: Any]) -> Void
   ) async throws -> [String: Any] {
-    let assets = fetchAssets(lastCreationTime: lastCreationTime, limit: limit)
+    // PhotoKit's creationDate is the image's authored/captured date, not a reliable
+    // "added to this library" date. Images saved from community apps can therefore
+    // arrive with an old creationDate and were permanently missed by the old
+    // timestamp predicate. Observe bounded recent windows from both creationDate and
+    // modificationDate, then use asset identifiers as the incremental source of truth.
+    let observedAssets = fetchRecentAssets(windowSize: 40)
     let previouslySeen = Set(seenAssetIds)
+    let isIncremental = lastCreationTime != nil || !seenAssetIds.isEmpty
+    let assets = Array(
+      (isIncremental
+        ? observedAssets.filter { !previouslySeen.contains($0.localIdentifier) }
+        : observedAssets
+      ).prefix(limit)
+    )
     var candidates: [[String: Any]] = []
-    var maxCreationTime = lastCreationTime
-    var idsAtMaxCreationTime = seenAssetIds
 
     for (index, asset) in assets.enumerated() {
       try jobs.check(jobId)
       let creationTime = asset.creationDate.map {
         ($0.timeIntervalSince1970 * 1_000).rounded(.towardZero)
       }
-      if let lastCreationTime,
-         let creationTime,
-         creationTime <= lastCreationTime,
-         previouslySeen.contains(asset.localIdentifier) {
-        onProgress(Self.progress(jobId, "detecting", index + 1, assets.count))
-        continue
-      }
-
-      if let creationTime {
-        if maxCreationTime == nil || creationTime > maxCreationTime! {
-          maxCreationTime = creationTime
-          idsAtMaxCreationTime = [asset.localIdentifier]
-        } else if creationTime == maxCreationTime && !idsAtMaxCreationTime.contains(asset.localIdentifier) {
-          idsAtMaxCreationTime.append(asset.localIdentifier)
-        }
-      }
 
       do {
-        // The fast pass never runs OCR and normally stays on PhotoKit thumbnails.
+        // Never accept PhotoKit's degraded callback here. It can be much smaller than
+        // the requested target and makes the automatic path miss QR codes that the
+        // full-resolution image picker recognizes correctly.
         let preview = try await loadImage(
           asset,
           jobId: jobId,
-          maxDimension: 1_200,
-          deliveryMode: .fastFormat,
+          maxDimension: 1_600,
+          deliveryMode: .highQualityFormat,
           resizeMode: .fast,
-          acceptDegraded: true
+          acceptDegraded: false
         )
         let payloads = try recognizeQr(in: preview, jobId: jobId)
         guard !payloads.isEmpty else {
@@ -339,13 +335,17 @@ private final class PhotoQrScanWorker {
     }
 
     try jobs.check(jobId)
-    var cursor: [String: Any] = ["seenAssetIds": idsAtMaxCreationTime]
-    if let maxCreationTime { cursor["lastCreationTime"] = maxCreationTime }
+    let observationIds = observedAssets.map(\.localIdentifier)
+    let maxObservedTime = observedAssets.compactMap(Self.activityTime).max()
+    var cursor: [String: Any] = ["seenAssetIds": observationIds]
+    if let maxObservedTime { cursor["lastCreationTime"] = maxObservedTime }
 
     return [
       "candidates": candidates,
       "cursor": cursor,
-      "hasIncrementalChanges": lastCreationTime != nil,
+      "hasIncrementalChanges": isIncremental && !assets.isEmpty,
+      "observedAssetCount": observedAssets.count,
+      "scannedAssetCount": assets.count,
     ]
   }
 
@@ -390,20 +390,52 @@ private final class PhotoQrScanWorker {
     ["text": line.text, "confidence": Double(line.confidence)]
   }
 
-  private func fetchAssets(lastCreationTime: Double?, limit: Int) -> [PHAsset] {
-    let options = PHFetchOptions()
-    options.fetchLimit = limit
-    if let lastCreationTime {
-      let date = Date(timeIntervalSince1970: lastCreationTime / 1_000)
-      options.predicate = NSPredicate(format: "creationDate >= %@", date as NSDate)
-      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-    } else {
-      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+  private static func activityTime(_ asset: PHAsset) -> Double? {
+    let date = [asset.creationDate, asset.modificationDate]
+      .compactMap { $0 }
+      .max()
+    return date.map { ($0.timeIntervalSince1970 * 1_000).rounded(.towardZero) }
+  }
+
+  private func fetchRecentAssets(windowSize: Int) -> [PHAsset] {
+    var assets: [PHAsset] = []
+    var identifiers = Set<String>()
+    func append(_ asset: PHAsset) {
+      if identifiers.insert(asset.localIdentifier).inserted { assets.append(asset) }
     }
 
-    let result = PHAsset.fetchAssets(with: .image, options: options)
-    var assets: [PHAsset] = []
-    result.enumerateObjects { asset, _, _ in assets.append(asset) }
+    // The Recently Added smart album is the only public PhotoKit surface whose
+    // collection order reflects library insertion rather than image metadata. Its
+    // edge direction is not documented, so sample both ends in an interleaved order.
+    let collections = PHAssetCollection.fetchAssetCollections(
+      with: .smartAlbum,
+      subtype: .smartAlbumRecentlyAdded,
+      options: nil
+    )
+    if let recentlyAdded = collections.firstObject {
+      let options = PHFetchOptions()
+      options.predicate = NSPredicate(
+        format: "mediaType == %d",
+        PHAssetMediaType.image.rawValue
+      )
+      let result = PHAsset.fetchAssets(in: recentlyAdded, options: options)
+      let edgeCount = min(windowSize, result.count)
+      for offset in 0..<edgeCount {
+        append(result.object(at: result.count - offset - 1))
+        append(result.object(at: offset))
+      }
+    }
+
+    for sortKey in ["creationDate", "modificationDate"] {
+      let options = PHFetchOptions()
+      options.fetchLimit = windowSize
+      options.sortDescriptors = [NSSortDescriptor(key: sortKey, ascending: false)]
+      let result = PHAsset.fetchAssets(with: .image, options: options)
+      result.enumerateObjects { asset, _, _ in
+        append(asset)
+      }
+    }
+
     return assets
   }
 

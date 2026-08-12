@@ -4,11 +4,14 @@ import * as SecureStore from "expo-secure-store";
 import type { DeploymentInfo, ScanCursor } from "@qr-lifecycle/contracts";
 
 import { clearPendingDetections } from "@/scanner/pending-detections";
+import { clearReviewImages } from "@/scanner/review-images";
 
 const SESSION_KEY = "fallinlife.mobile-session.v2";
 const LEGACY_SESSION_KEY = "qr-lifecycle.mobile-session.v1";
 const INSTALLATION_KEY = "fallinlife.installation-id.v1";
-const SCAN_CURSOR_KEY = "qr-lifecycle.photo-cursor.global.v2";
+// v3 replaces the creation-time cursor with a bounded recent-asset ID window.
+// Keeping a new key intentionally performs a one-time rescan after upgrading.
+const SCAN_CURSOR_KEY = "qr-lifecycle.photo-cursor.global.v3";
 
 export interface MobileSession {
   token: string;
@@ -55,7 +58,7 @@ export async function getOrCreateInstallationId(): Promise<string> {
 export async function saveSession(session: MobileSession): Promise<void> {
   const previous = await loadSession();
   if (previous && previous.deployment.apiOrigin !== session.deployment.apiOrigin) {
-    await Promise.all([clearScanCursor(), clearPendingDetections()]);
+    await Promise.all([clearScanCursor(), clearPendingDetections(), clearReviewImages()]);
   }
   await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session), {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -67,6 +70,7 @@ export async function clearSession(): Promise<void> {
     SecureStore.deleteItemAsync(SESSION_KEY),
     clearScanCursor(),
     clearPendingDetections(),
+    clearReviewImages(),
   ]);
 }
 
@@ -97,7 +101,7 @@ export async function saveScanCursor(
     : cursorOrLegacyChannelId;
   if (!cursor) throw new Error("Scan cursor is required");
   const compact: ScanCursor = {
-    seenAssetIds: cursor.seenAssetIds.slice(-50),
+    seenAssetIds: cursor.seenAssetIds.slice(0, 160),
     ...(cursor.lastCreationTime === undefined
       ? {}
       : { lastCreationTime: cursor.lastCreationTime }),

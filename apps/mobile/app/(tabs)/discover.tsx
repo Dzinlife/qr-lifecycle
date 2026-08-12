@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   AppState,
+  Image,
   Linking,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -11,9 +14,11 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { Redirect, useRouter } from "expo-router";
+import { Redirect, useFocusEffect, useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import type {
+  AcceptInboxItemInput,
   Channel,
   ChannelPlatform,
   CommitDetectionResponse,
@@ -53,6 +58,11 @@ import {
   removePendingDetection,
 } from "@/scanner/pending-detections";
 import {
+  loadReviewImageUris,
+  preserveReviewImage,
+  removeReviewImage,
+} from "@/scanner/review-images";
+import {
   clearScanCursor,
   loadScanCursor,
   saveScanCursor,
@@ -67,21 +77,20 @@ type ScanPhase =
   | "cancelling"
   | "cancelled"
   | "done"
+  | "limited"
   | "denied"
   | "unsupported"
   | "error";
 
 interface ScanSummary {
   scanned: number;
-  created: number;
-  updated: number;
-  duplicates: number;
   needsReview: number;
+  alreadyProcessed: number;
 }
 
 interface RecentDecision {
   detectionId: string;
-  action: "auto_create" | "auto_update" | "accepted_create" | "accepted_update";
+  action: "accepted_create" | "accepted_update";
   name: string;
 }
 
@@ -125,10 +134,19 @@ function phaseLabel(phase: ScanPhase, processed: number, total: number): string 
     return total ? `正在快速检查照片（${processed}/${total}）…` : "正在读取新增照片…";
   }
   if (phase === "analyzing") return "发现二维码，正在本机识别群名和到期时间…";
-  if (phase === "committing") return `正在安全更新（${processed}/${total}）…`;
+  if (phase === "committing") return `正在保存检测结果（${processed}/${total}）…`;
   if (phase === "cancelling") return "正在停止扫描…";
   if (phase === "cancelled") return "扫描已停止，已处理的照片不会丢失";
   return null;
+}
+
+function acceptanceInput(item: InboxItem, name: string): AcceptInboxItemInput {
+  if (item.suggestedChannel) return { channelId: item.suggestedChannel.id };
+  return {
+    createNew: true,
+    name: name.trim() || item.detection.name || undefined,
+    platform: item.detection.platform ?? "other",
+  };
 }
 
 function throwIfCancelled(signal: AbortSignal): void {
@@ -137,17 +155,23 @@ function throwIfCancelled(signal: AbortSignal): void {
 
 function InboxCard({
   item,
+  imageUri,
+  name,
   busy,
+  onNameChange,
   onAccept,
   onIgnore,
 }: {
   item: InboxItem;
+  imageUri: string | undefined;
+  name: string;
   busy: boolean;
+  onNameChange(name: string): void;
   onAccept(name?: string): void;
   onIgnore(): void;
 }) {
   const { detection, suggestedChannel } = item;
-  const [name, setName] = useState(detection.name ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const title = detection.name ?? suggestedChannel?.name ?? "未命名群码";
   const platform = detection.platform
     ? platformNames[detection.platform]
@@ -158,6 +182,18 @@ function InboxCard({
 
   return (
     <Card>
+      {imageUri ? (
+        <Pressable
+          accessibilityLabel="查看检测原图"
+          accessibilityRole="button"
+          onPress={() => setPreviewOpen(true)}
+        >
+          <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.reviewImage} />
+          <Text style={styles.imageHint}>点击查看原图</Text>
+        </Pressable>
+      ) : (
+        <Notice tone="danger">本机原图已不可用，请忽略后重新扫描。</Notice>
+      )}
       <View style={styles.rowBetween}>
         <View style={styles.flexCopy}>
           <Text style={textStyles.heading}>{title}</Text>
@@ -172,12 +208,12 @@ function InboxCard({
       ) : (
         <Notice>系统认为这是一个新频道，请确认后创建。</Notice>
       )}
-      {!suggestedChannel && !detection.name ? (
+      {!suggestedChannel ? (
         <View>
           <Text style={textStyles.label}>群名称</Text>
           <TextInput
             maxLength={120}
-            onChangeText={setName}
+            onChangeText={onNameChange}
             placeholder="识别不到时在这里修正"
             style={styles.input}
             value={name}
@@ -187,10 +223,14 @@ function InboxCard({
       <View style={styles.actionRow}>
         <View style={styles.flexButton}>
           <Button
-            disabled={busy || (!suggestedChannel && !detection.name && !name.trim())}
+            disabled={
+              busy
+              || !imageUri
+              || (!suggestedChannel && !detection.name && !name.trim())
+            }
             onPress={() => onAccept(name.trim() || undefined)}
           >
-            {busy ? "处理中…" : suggestedChannel ? "确认更新" : "确认创建"}
+            {busy ? "处理中…" : suggestedChannel ? "更新该频道" : "创建该频道"}
           </Button>
         </View>
         <Pressable
@@ -202,6 +242,28 @@ function InboxCard({
           <Text style={styles.ignoreText}>忽略</Text>
         </Pressable>
       </View>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setPreviewOpen(false)}
+        presentationStyle="fullScreen"
+        visible={previewOpen}
+      >
+        <SafeAreaView style={styles.previewScreen}>
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>检测原图</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setPreviewOpen(false)}
+              style={styles.previewClose}
+            >
+              <Text style={styles.previewCloseText}>完成</Text>
+            </Pressable>
+          </View>
+          {imageUri ? (
+            <Image resizeMode="contain" source={{ uri: imageUri }} style={styles.previewImage} />
+          ) : null}
+        </SafeAreaView>
+      </Modal>
     </Card>
   );
 }
@@ -215,10 +277,14 @@ export default function DiscoverScreen() {
   const [recent, setRecent] = useState<RecentDecision[]>([]);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [inboxLoading, setInboxLoading] = useState(true);
+  const [reviewImageUris, setReviewImageUris] = useState<Record<string, string>>({});
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [limitedAccess, setLimitedAccess] = useState(false);
+  const [scanStats, setScanStats] = useState<{ observed: number; scanned: number } | null>(null);
   const [busyInboxId, setBusyInboxId] = useState<string | null>(null);
+  const [bulkAction, setBulkAction] = useState<"accept" | "ignore" | null>(null);
   const [undoingId, setUndoingId] = useState<string | null>(null);
   const scanningRef = useRef(false);
   const activeJobRef = useRef<ActiveScanJob | null>(null);
@@ -230,7 +296,17 @@ export default function DiscoverScreen() {
     if (showRefresh) setRefreshing(true);
     else setInboxLoading(true);
     try {
-      setInbox(await listInbox(session));
+      const items = await listInbox(session);
+      const imageUris = await loadReviewImageUris(
+        session.deployment.apiOrigin,
+        items.map((item) => item.detection.id),
+      );
+      setInbox(items);
+      setReviewImageUris(imageUris);
+      setNameDrafts((current) => Object.fromEntries(items.map((item) => [
+        item.detection.id,
+        current[item.detection.id] ?? item.detection.name ?? "",
+      ])));
     } catch (caught) {
       setError(humanizeError(caught));
     } finally {
@@ -244,13 +320,9 @@ export default function DiscoverScreen() {
     const pending = await loadPendingDetections(session.deployment.apiOrigin);
     const nextSummary: ScanSummary = {
       scanned: pending.length,
-      created: 0,
-      updated: 0,
-      duplicates: 0,
       needsReview: 0,
+      alreadyProcessed: 0,
     };
-    const nextRecent: RecentDecision[] = [];
-
     setPhase("committing");
     setProgress({ processed: 0, total: pending.length });
     setSummary(nextSummary);
@@ -259,24 +331,21 @@ export default function DiscoverScreen() {
       const response = await commitDetection(
         session,
         item.detection,
-        item.candidate,
         signal,
       );
-      if (response.decision.action === "auto_create") nextSummary.created += 1;
-      if (response.decision.action === "auto_update") nextSummary.updated += 1;
-      if (response.decision.action === "duplicate") nextSummary.duplicates += 1;
-      if (response.decision.action === "needs_review") nextSummary.needsReview += 1;
-      if (response.decision.action === "auto_create" || response.decision.action === "auto_update") {
-        nextRecent.push({
-          detectionId: response.detection.id,
-          action: response.decision.action,
-          name: decisionName(response),
-        });
+      if (response.decision.action === "needs_review") {
+        await preserveReviewImage(
+          session.deployment.apiOrigin,
+          response.detection.id,
+          item.candidate.imageUri,
+        );
+        nextSummary.needsReview += 1;
+      } else {
+        nextSummary.alreadyProcessed += 1;
       }
       await removePendingDetection(item.detection.clientDetectionId);
       setProgress({ processed: index + 1, total: pending.length });
       setSummary({ ...nextSummary });
-      setRecent([...nextRecent]);
     }
   }, [session]);
 
@@ -297,6 +366,7 @@ export default function DiscoverScreen() {
     setError(null);
     setSummary(null);
     setRecent([]);
+    setScanStats(null);
     try {
       const channels: Channel[] = await listChannels(session);
       throwIfCancelled(job.controller.signal);
@@ -327,7 +397,12 @@ export default function DiscoverScreen() {
           setPhase("denied");
           return;
         }
-        setLimitedAccess(permission.status === "limited");
+        if (permission.status === "limited") {
+          setLimitedAccess(true);
+          setPhase("limited");
+          return;
+        }
+        setLimitedAccess(false);
         if (full) await clearScanCursor(DISCOVERY_CURSOR);
         const cursor: ScanCursor | undefined = full
           ? undefined
@@ -340,6 +415,10 @@ export default function DiscoverScreen() {
           channels,
           cursor ? 100 : 20,
         );
+        setScanStats({
+          observed: result.observedAssetCount ?? 0,
+          scanned: result.scannedAssetCount ?? 0,
+        });
         if (result.candidates.length > 0) {
           setPhase("analyzing");
           setProgress({ processed: 0, total: result.candidates.length });
@@ -412,11 +491,12 @@ export default function DiscoverScreen() {
     }
   }, [session]);
 
-  useEffect(() => {
-    if (!session) return;
+  useFocusEffect(useCallback(() => {
+    if (!session) return undefined;
     void loadInboxItems();
-    void runScan();
-  }, [loadInboxItems, runScan, session]);
+    if (Date.now() - lastForegroundScanAt.current >= 750) void runScan();
+    return undefined;
+  }, [loadInboxItems, runScan, session]));
 
   useEffect(() => {
     if (!session) return undefined;
@@ -459,15 +539,19 @@ export default function DiscoverScreen() {
   };
 
   const handleAccept = async (item: InboxItem, name?: string) => {
+    const imageUri = reviewImageUris[item.detection.id];
+    if (!imageUri) {
+      setError("本机原图已不可用，请忽略后重新扫描");
+      return;
+    }
     setBusyInboxId(item.detection.id);
     setError(null);
     try {
       const response = await acceptInboxItem(
         session,
         item.detection.id,
-        item.suggestedChannel
-          ? { channelId: item.suggestedChannel.id }
-          : { ...(name ? { name } : {}) },
+        acceptanceInput(item, name ?? nameDrafts[item.detection.id] ?? ""),
+        imageUri,
       );
       if (
         response.decision.action === "accepted_create"
@@ -480,6 +564,7 @@ export default function DiscoverScreen() {
           name: decisionName(response),
         }, ...items]);
       }
+      await removeReviewImage(item.detection.id);
       await loadInboxItems();
     } catch (caught) {
       setError(humanizeError(caught));
@@ -493,12 +578,94 @@ export default function DiscoverScreen() {
     setError(null);
     try {
       await ignoreInboxItem(session, item.detection.id);
+      await removeReviewImage(item.detection.id);
       await loadInboxItems();
     } catch (caught) {
       setError(humanizeError(caught));
     } finally {
       setBusyInboxId(null);
     }
+  };
+
+  const handleAcceptAll = async () => {
+    const unavailable = inbox.filter((item) => !reviewImageUris[item.detection.id]);
+    const unnamed = inbox.filter((item) =>
+      !item.suggestedChannel
+      && !(nameDrafts[item.detection.id] ?? item.detection.name ?? "").trim());
+    if (unavailable.length || unnamed.length) {
+      setError(
+        unavailable.length
+          ? `还有 ${unavailable.length} 条检测缺少本机原图，请先忽略并重新扫描`
+          : `还有 ${unnamed.length} 条检测缺少群名称，请先补充`,
+      );
+      return;
+    }
+
+    setBulkAction("accept");
+    setError(null);
+    const accepted: RecentDecision[] = [];
+    try {
+      for (const item of inbox) {
+        const imageUri = reviewImageUris[item.detection.id];
+        if (!imageUri) continue;
+        setBusyInboxId(item.detection.id);
+        const response = await acceptInboxItem(
+          session,
+          item.detection.id,
+          acceptanceInput(item, nameDrafts[item.detection.id] ?? ""),
+          imageUri,
+        );
+        if (
+          response.decision.action === "accepted_create"
+          || response.decision.action === "accepted_update"
+        ) {
+          accepted.push({
+            detectionId: response.detection.id,
+            action: response.decision.action,
+            name: decisionName(response),
+          });
+        }
+        await removeReviewImage(item.detection.id);
+        setInbox((items) => items.filter((entry) => entry.detection.id !== item.detection.id));
+      }
+      setRecent((items) => [...accepted.reverse(), ...items]);
+    } catch (caught) {
+      setError(humanizeError(caught));
+    } finally {
+      setBusyInboxId(null);
+      setBulkAction(null);
+      await loadInboxItems();
+    }
+  };
+
+  const handleIgnoreAll = async () => {
+    setBulkAction("ignore");
+    setError(null);
+    try {
+      for (const item of inbox) {
+        setBusyInboxId(item.detection.id);
+        await ignoreInboxItem(session, item.detection.id);
+        await removeReviewImage(item.detection.id);
+        setInbox((items) => items.filter((entry) => entry.detection.id !== item.detection.id));
+      }
+    } catch (caught) {
+      setError(humanizeError(caught));
+    } finally {
+      setBusyInboxId(null);
+      setBulkAction(null);
+      await loadInboxItems();
+    }
+  };
+
+  const confirmIgnoreAll = () => {
+    Alert.alert(
+      "忽略全部检测结果？",
+      `将忽略当前 ${inbox.length} 条结果，频道不会发生变化。`,
+      [
+        { text: "取消", style: "cancel" },
+        { text: "全部忽略", style: "destructive", onPress: () => void handleIgnoreAll() },
+      ],
+    );
   };
 
   const handleUndo = async (decision: RecentDecision) => {
@@ -533,7 +700,7 @@ export default function DiscoverScreen() {
           <Text style={textStyles.eyebrow}>{session.deployment.productName}</Text>
           <Text style={textStyles.title}>保存群码，剩下的交给这里</Text>
           <Text style={textStyles.body}>
-            App 会在本机识别相册中的二维码、群名和到期时间，并自动创建或更新频道。
+            App 会在本机识别相册中的二维码、群名和到期时间，再由你决定更新、创建或忽略。
           </Text>
         </View>
 
@@ -548,8 +715,15 @@ export default function DiscoverScreen() {
             <View style={[styles.statusDot, scanning && styles.statusDotScanning]} />
           </View>
 
-          {limitedAccess ? (
-            <Notice>目前只能扫描你授权给本 App 的照片。</Notice>
+          {limitedAccess || phase === "limited" ? (
+            <>
+              <Notice tone="danger">
+                当前是“部分照片”权限。iOS 不会把以后保存的新图片交给 App，因此自动扫描无法工作；请改为“完全访问”。
+              </Notice>
+              <Button tone="secondary" onPress={() => void Linking.openSettings()}>
+                打开设置并允许完全访问
+              </Button>
+            </>
           ) : null}
           {phase === "denied" ? (
             <>
@@ -590,6 +764,11 @@ export default function DiscoverScreen() {
           >
             <Text style={styles.rescanText}>重新扫描最近照片</Text>
           </Pressable>
+          {scanStats ? (
+            <Text style={textStyles.muted}>
+              本次原生观察到 {scanStats.observed} 张最近照片，实际检查 {scanStats.scanned} 张新增照片。
+            </Text>
+          ) : null}
         </Card>
 
         {error && phase !== "error" && phase !== "unsupported" ? (
@@ -603,20 +782,12 @@ export default function DiscoverScreen() {
             </Text>
             <View style={styles.summaryGrid}>
               <View style={styles.summaryItem}>
-                <Text style={styles.summaryNumber}>{summary.created}</Text>
-                <Text style={textStyles.muted}>自动创建</Text>
-              </View>
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryNumber}>{summary.updated}</Text>
-                <Text style={textStyles.muted}>自动更新</Text>
-              </View>
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryNumber}>{summary.duplicates}</Text>
-                <Text style={textStyles.muted}>重复跳过</Text>
-              </View>
-              <View style={styles.summaryItem}>
                 <Text style={styles.summaryNumber}>{summary.needsReview}</Text>
-                <Text style={textStyles.muted}>需要确认</Text>
+                <Text style={textStyles.muted}>等待确认</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryNumber}>{summary.alreadyProcessed}</Text>
+                <Text style={textStyles.muted}>此前已处理</Text>
               </View>
             </View>
           </Card>
@@ -637,24 +808,52 @@ export default function DiscoverScreen() {
 
         <View style={styles.sectionHeader}>
           <View style={styles.flexCopy}>
-            <Text style={textStyles.heading}>需要你确认</Text>
-            <Text style={textStyles.muted}>只有判断不够确定时，系统才会在这里打扰你。</Text>
+            <Text style={textStyles.heading}>检测结果</Text>
+            <Text style={textStyles.muted}>每一条都由你确认，系统不会自动修改频道。</Text>
           </View>
           {inbox.length ? <Text style={styles.inboxCount}>{inbox.length}</Text> : null}
         </View>
+
+        {inbox.length ? (
+          <View style={styles.bulkActions}>
+            <View style={styles.flexButton}>
+              <Button
+                disabled={bulkAction !== null || busyInboxId !== null}
+                onPress={() => void handleAcceptAll()}
+              >
+                {bulkAction === "accept" ? "全部处理中…" : "全部更新"}
+              </Button>
+            </View>
+            <View style={styles.flexButton}>
+              <Button
+                disabled={bulkAction !== null || busyInboxId !== null}
+                onPress={confirmIgnoreAll}
+                tone="secondary"
+              >
+                {bulkAction === "ignore" ? "全部忽略中…" : "全部忽略"}
+              </Button>
+            </View>
+          </View>
+        ) : null}
 
         {inboxLoading ? <Text style={textStyles.muted}>正在读取待确认项目…</Text> : null}
         {!inboxLoading && inbox.length === 0 ? (
           <Card>
             <Text style={textStyles.heading}>已经处理完了</Text>
-            <Text style={textStyles.muted}>没有需要手动判断的群码。</Text>
+            <Text style={textStyles.muted}>没有等待处理的群码。</Text>
           </Card>
         ) : null}
         {inbox.map((item) => (
           <InboxCard
-            busy={busyInboxId === item.detection.id}
+            busy={bulkAction !== null || busyInboxId === item.detection.id}
+            imageUri={reviewImageUris[item.detection.id]}
             item={item}
             key={item.detection.id}
+            name={nameDrafts[item.detection.id] ?? item.detection.name ?? ""}
+            onNameChange={(name) => setNameDrafts((items) => ({
+              ...items,
+              [item.detection.id]: name,
+            }))}
             onAccept={(name) => void handleAccept(item, name)}
             onIgnore={() => void handleIgnore(item)}
           />
@@ -683,6 +882,7 @@ const styles = StyleSheet.create({
   statusDotScanning: { backgroundColor: colors.warning },
   actionRow: { alignItems: "center", flexDirection: "row", gap: 10 },
   flexButton: { flex: 1 },
+  bulkActions: { flexDirection: "row", gap: 10 },
   ignoreButton: { paddingHorizontal: 12, paddingVertical: 14 },
   ignoreText: { color: colors.muted, fontSize: 15, fontWeight: "700" },
   rescanText: {
@@ -717,6 +917,31 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   confidence: { color: colors.primary, fontSize: 14, fontWeight: "800" },
+  reviewImage: {
+    backgroundColor: "#EEF0EC",
+    borderRadius: 14,
+    height: 240,
+    width: "100%",
+  },
+  imageHint: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  previewScreen: { backgroundColor: "#090B0A", flex: 1 },
+  previewHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  previewTitle: { color: "#FFFFFF", fontSize: 17, fontWeight: "700" },
+  previewClose: { paddingHorizontal: 4, paddingVertical: 8 },
+  previewCloseText: { color: "#8BD8B7", fontSize: 16, fontWeight: "700" },
+  previewImage: { flex: 1, width: "100%" },
   input: {
     backgroundColor: "#F7F8F5",
     borderColor: colors.border,

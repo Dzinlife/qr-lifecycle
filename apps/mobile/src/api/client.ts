@@ -179,17 +179,16 @@ export async function uploadQrCandidate(
 export async function commitDetection(
   session: MobileSession,
   detection: DetectedCommunityQr,
-  candidate: QrCandidate,
   signal?: AbortSignal,
 ): Promise<CommitDetectionResponse> {
-  const form = new FormData();
-  form.append("metadata", JSON.stringify(detection));
-  form.append("image", imageFile(candidate));
-
   return request<CommitDetectionResponse>(
     session.deployment.apiOrigin,
     "/detections/commit",
-    { method: "POST", body: form, ...(signal ? { signal } : {}) },
+    {
+      method: "POST",
+      body: JSON.stringify(detection),
+      ...(signal ? { signal } : {}),
+    },
     session.token,
   );
 }
@@ -208,11 +207,21 @@ export async function acceptInboxItem(
   session: MobileSession,
   detectionId: string,
   input: AcceptInboxItemInput = {},
+  imageUri?: string,
 ): Promise<CommitDetectionResponse> {
+  let body: string | FormData;
+  if (imageUri) {
+    const form = new FormData();
+    form.append("input", JSON.stringify(input));
+    form.append("image", new File(imageUri));
+    body = form;
+  } else {
+    body = JSON.stringify(input);
+  }
   return request<CommitDetectionResponse>(
     session.deployment.apiOrigin,
     `/inbox/${encodeURIComponent(detectionId)}/accept`,
-    { method: "POST", body: JSON.stringify(input) },
+    { method: "POST", body },
     session.token,
   );
 }

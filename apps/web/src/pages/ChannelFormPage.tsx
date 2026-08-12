@@ -102,7 +102,7 @@ export function ChannelFormPage() {
       <PageHeading
         eyebrow="辅助纠错"
         title="编辑频道"
-        description="修正手机识别的名称、公开地址和提醒时间。新频道仍只由手机自动创建。"
+        description="修正手机识别的名称、公开地址和提醒时间。新频道需在手机检测结果中确认创建。"
       />
 
       <form className="editor-card" onSubmit={submit}>

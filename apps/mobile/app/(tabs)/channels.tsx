@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -6,7 +6,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Redirect, useRouter } from "expo-router";
+import { Redirect, useFocusEffect, useRouter } from "expo-router";
 
 import type { Channel, ChannelPlatform } from "@qr-lifecycle/contracts";
 
@@ -45,10 +45,11 @@ export default function ChannelsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasLoadedRef = useRef(false);
 
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(async (refresh = false, silent = false) => {
     if (!session) return;
-    refresh ? setRefreshing(true) : setLoading(true);
+    if (!silent) refresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
       setChannels(await listChannels(session));
@@ -60,9 +61,12 @@ export default function ChannelsScreen() {
     }
   }, [session]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useFocusEffect(useCallback(() => {
+    const silent = hasLoadedRef.current;
+    hasLoadedRef.current = true;
+    void load(false, silent);
+    return undefined;
+  }, [load]));
 
   if (hydrated && !session) return <Redirect href="/onboarding" />;
   if (!session) return null;
@@ -92,7 +96,7 @@ export default function ChannelsScreen() {
         {!loading && !error && channels.length === 0 ? (
           <Card>
             <Text style={textStyles.heading}>还没有发现群码</Text>
-            <Text style={textStyles.muted}>把微信群或小红书群二维码保存到相册，“发现”会自动创建频道。</Text>
+            <Text style={textStyles.muted}>把微信群或小红书群二维码保存到相册，“发现”会识别并等你确认。</Text>
             <Button onPress={() => router.replace("/discover")}>去发现</Button>
           </Card>
         ) : null}

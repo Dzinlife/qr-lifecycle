@@ -87,7 +87,7 @@ export function DashboardPage() {
       {channels?.length === 0 ? (
         <EmptyState
           title="从手机自动发现第一个群码"
-          description="在手机中保存微信群、小红书群或 Discord 二维码，再打开 Fallinlife。App 会自动识别、创建频道并生成稳定入口。"
+          description="在手机中保存微信群、小红书群或 Discord 二维码，再打开 Fallinlife。App 会自动识别，并由你确认创建或更新频道。"
         />
       ) : null}
 

@@ -28,8 +28,6 @@ import {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/heic", "image/heif"]);
-const AUTO_CREATE_THRESHOLD = 0.9;
-const AUTO_UPDATE_THRESHOLD = 0.95;
 
 interface DetectionRow {
   id: string;
@@ -78,7 +76,6 @@ interface MatchResult {
   channel: ChannelRow | null;
   confidence: number;
   reason: string;
-  allowAutoCreate: boolean;
 }
 
 interface DetectionCommitResult {
@@ -130,8 +127,7 @@ function decisionFromRow(row: DetectionRow): DetectionDecision {
     action: row.action,
     automatic:
       row.action === "auto_create" ||
-      row.action === "auto_update" ||
-      row.action === "duplicate",
+      row.action === "auto_update",
     confidence: row.decision_confidence,
     reason: row.decision_reason,
     channelId: row.channel_id,
@@ -264,47 +260,71 @@ function createChannelRow(
   };
 }
 
+function parseDetectionMetadata(rawMetadata: unknown): DetectedCommunityQr {
+  if (typeof rawMetadata === "string" && rawMetadata.length > 256 * 1024) {
+    throw new HttpError(413, "metadata_too_large", "Detection metadata is too large");
+  }
+  let value = rawMetadata;
+  if (typeof rawMetadata === "string") {
+    if (rawMetadata.length === 0) {
+      throw new HttpError(400, "metadata_required", "Structured detection metadata is required");
+    }
+    try {
+      value = JSON.parse(rawMetadata);
+    } catch {
+      throw new HttpError(400, "invalid_metadata", "Detection metadata is not valid JSON");
+    }
+  }
+  const parsed = detectedCommunityQrSchema.safeParse(value);
+  if (!parsed.success) invalidSchema(parsed.error.issues);
+  return parsed.data;
+}
+
+function parseImage(value: FormDataEntryValue | null): File {
+  if (!(value instanceof File)) {
+    throw new HttpError(400, "image_required", "A QR image is required");
+  }
+  const contentType = value.type.toLocaleLowerCase();
+  if (!IMAGE_TYPES.has(contentType)) {
+    throw new HttpError(415, "unsupported_image_type", "Use PNG, JPEG, or HEIC");
+  }
+  if (value.size <= 0 || value.size > MAX_IMAGE_BYTES) {
+    throw new HttpError(413, "image_too_large", "QR image must not exceed 10 MiB");
+  }
+  return value;
+}
+
 function parseCommitForm(form: FormData): {
   input: DetectedCommunityQr;
   image: File;
 } {
   const rawMetadata = form.get("metadata");
-  if (typeof rawMetadata !== "string" || rawMetadata.length === 0) {
+  if (rawMetadata === null) {
     throw new HttpError(400, "metadata_required", "Structured detection metadata is required");
   }
-  if (rawMetadata.length > 256 * 1024) {
-    throw new HttpError(413, "metadata_too_large", "Detection metadata is too large");
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(rawMetadata);
-  } catch {
-    throw new HttpError(400, "invalid_metadata", "Detection metadata is not valid JSON");
-  }
-  const parsed = detectedCommunityQrSchema.safeParse(value);
-  if (!parsed.success) invalidSchema(parsed.error.issues);
-
-  const image = form.get("image");
-  if (!(image instanceof File)) {
-    throw new HttpError(400, "image_required", "A QR image is required");
-  }
-  const contentType = image.type.toLocaleLowerCase();
-  if (!IMAGE_TYPES.has(contentType)) {
-    throw new HttpError(415, "unsupported_image_type", "Use PNG, JPEG, or HEIC");
-  }
-  if (image.size <= 0 || image.size > MAX_IMAGE_BYTES) {
-    throw new HttpError(413, "image_too_large", "QR image must not exceed 10 MiB");
-  }
-  return { input: parsed.data, image };
+  return {
+    input: parseDetectionMetadata(rawMetadata),
+    image: parseImage(form.get("image")),
+  };
 }
 
-async function readCommitForm(request: Request): Promise<{
+async function readCommitRequest(request: Request): Promise<{
   input: DetectedCommunityQr;
-  image: File;
+  image: File | null;
 }> {
   const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.toLocaleLowerCase().startsWith("application/json")) {
+    const contentLength = request.headers.get("content-length");
+    if (contentLength) {
+      const byteLength = Number(contentLength);
+      if (!Number.isFinite(byteLength) || byteLength > 256 * 1024) {
+        throw new HttpError(413, "metadata_too_large", "Detection metadata is too large");
+      }
+    }
+    return { input: parseDetectionMetadata(await readJson(request)), image: null };
+  }
   if (!contentType.toLocaleLowerCase().startsWith("multipart/form-data")) {
-    throw new HttpError(415, "unsupported_media_type", "Expected multipart form data");
+    throw new HttpError(415, "unsupported_media_type", "Expected JSON or multipart form data");
   }
   const contentLength = request.headers.get("content-length");
   if (contentLength) {
@@ -360,7 +380,6 @@ async function matchChannel(
             0.98,
           ),
           reason: "Verified the device suggestion using a account-local name or alias",
-          allowAutoCreate: false,
         };
       }
       return {
@@ -368,7 +387,6 @@ async function matchChannel(
         confidence: 0,
         reason:
           "The device suggestion conflicts with the account-local channel identity",
-        allowAutoCreate: false,
       };
     }
   }
@@ -378,7 +396,6 @@ async function matchChannel(
       channel: null,
       confidence: 0,
       reason: "No reliable channel name was detected",
-      allowAutoCreate: false,
     };
   }
   const aliasRows = await env.DB.prepare(
@@ -403,7 +420,6 @@ async function matchChannel(
         matchingIds.size > 1
           ? "The detected name matches multiple channels"
           : "No account-local channel name or alias matched",
-      allowAutoCreate: matchingIds.size === 0,
     };
   }
   const channelId = matchingIds.values().next().value as string | undefined;
@@ -413,14 +429,12 @@ async function matchChannel(
       channel,
       confidence: 0,
       reason: "The detected platform conflicts with the matched channel",
-      allowAutoCreate: false,
     };
   }
   return {
     channel,
     confidence: Math.min(0.98, input.fieldConfidences.name),
     reason: "Matched one account-local normalized channel name or alias",
-    allowAutoCreate: false,
   };
 }
 
@@ -528,7 +542,7 @@ function baseDetectionRow(
   accountId: string,
   input: DetectedCommunityQr,
   decodedPayloadHash: string,
-  image: PendingImage,
+  image: PendingImage | null,
   match: MatchResult,
   now: string,
 ): DetectionRow {
@@ -554,9 +568,9 @@ function baseDetectionRow(
     decision_reason: match.reason,
     channel_id: null,
     qr_version_id: null,
-    pending_object_key: image.objectKey,
-    pending_content_type: image.contentType,
-    pending_byte_size: image.byteSize,
+    pending_object_key: image?.objectKey ?? null,
+    pending_content_type: image?.contentType ?? null,
+    pending_byte_size: image?.byteSize ?? null,
     previous_channel_name: null,
     previous_channel_platform: null,
     previous_channel_expires_at: null,
@@ -666,7 +680,7 @@ async function commitCreate(
   env: Env,
   row: DetectionRow,
   input: { name: string; platform: ChannelPlatform; expiresAt: string | null },
-  action: "auto_create" | "accepted_create",
+  action: "accepted_create",
   confidence: number,
   reason: string,
 ): Promise<DetectionCommitResult> {
@@ -718,7 +732,7 @@ async function commitUpdate(
   env: Env,
   row: DetectionRow,
   channel: ChannelRow,
-  action: "auto_update" | "accepted_update",
+  action: "accepted_update",
   confidence: number,
   reason: string,
 ): Promise<DetectionCommitResult> {
@@ -737,7 +751,7 @@ async function commitUpdate(
   if (existing) {
     const deleteObjectKey = row.pending_object_key;
     row.action = "duplicate";
-    row.decision_confidence = Math.max(confidence, AUTO_UPDATE_THRESHOLD);
+    row.decision_confidence = confidence;
     row.decision_reason = "This channel already has the same QR payload";
     row.qr_version_id = existing.id;
     row.pending_object_key = null;
@@ -795,63 +809,12 @@ async function saveReview(
   return { row, deleteObjectKey: null };
 }
 
-async function decideInitialCommit(
-  env: Env,
-  row: DetectionRow,
-  input: DetectedCommunityQr,
-  match: MatchResult,
-): Promise<DetectionCommitResult> {
-  if (match.channel) {
-    if (match.confidence >= AUTO_UPDATE_THRESHOLD) {
-      return commitUpdate(
-        env,
-        row,
-        match.channel,
-        "auto_update",
-        match.confidence,
-        match.reason,
-      );
-    }
-    return saveReview(
-      env,
-      row,
-      match.confidence,
-      `${match.reason}; confirmation is required below the update threshold`,
-    );
-  }
-  const createConfidence =
-    input.name && input.platform
-      ? Math.min(input.fieldConfidences.name, input.fieldConfidences.platform)
-      : 0;
-  if (
-    input.name &&
-    input.platform &&
-    match.allowAutoCreate &&
-    createConfidence >= AUTO_CREATE_THRESHOLD
-  ) {
-    return commitCreate(
-      env,
-      row,
-      { name: input.name, platform: input.platform, expiresAt: input.expiresAt },
-      "auto_create",
-      createConfidence,
-      "The device supplied high-confidence channel identity fields",
-    );
-  }
-  return saveReview(
-    env,
-    row,
-    createConfidence,
-    `${match.reason}; channel identity needs confirmation`,
-  );
-}
-
 export async function commitDetection(
   request: Request,
   env: Env,
 ): Promise<Response> {
   const auth = await authenticate(request, env, "mobile");
-  const { input, image } = await readCommitForm(request);
+  const { input } = await readCommitRequest(request);
   const existing = await env.DB.prepare(
     `SELECT * FROM detections
      WHERE account_id = ? AND client_detection_id = ? LIMIT 1`,
@@ -862,36 +825,30 @@ export async function commitDetection(
 
   const now = new Date().toISOString();
   const detectionId = crypto.randomUUID();
-  const objectKey = `accounts/${auth.accountId}/detections/${detectionId}`;
-  const contentType = image.type.toLocaleLowerCase();
-  await env.QR_BUCKET.put(objectKey, image, {
-    httpMetadata: {
-      contentType,
-      cacheControl: "public, max-age=31536000, immutable",
-    },
-    customMetadata: {
-      accountId: auth.accountId,
-      detectionId,
-      source: "on-device",
-    },
-  });
+  const match = await matchChannel(env, auth.accountId, input);
+  const decodedPayloadHash = await sha256(`${auth.accountId}${input.decodedPayload}`);
 
+  const row = baseDetectionRow(
+    auth.accountId,
+    input,
+    decodedPayloadHash,
+    null,
+    match,
+    now,
+  );
+  row.id = detectionId;
+  const identityConfidence = input.name && input.platform
+    ? Math.min(input.fieldConfidences.name, input.fieldConfidences.platform)
+    : match.confidence;
   try {
-    const match = await matchChannel(env, auth.accountId, input);
-    const row = baseDetectionRow(
-      auth.accountId,
-      input,
-      await sha256(`${auth.accountId}${input.decodedPayload}`),
-      { objectKey, contentType, byteSize: image.size },
-      match,
-      now,
+    const result = await saveReview(
+      env,
+      row,
+      identityConfidence,
+      `${match.reason}; user confirmation is required and the original image remains on-device`,
     );
-    row.id = detectionId;
-    const result = await decideInitialCommit(env, row, input, match);
-    if (result.deleteObjectKey) await env.QR_BUCKET.delete(result.deleteObjectKey);
-    return await responseForRow(env, result.row);
+    return responseForRow(env, result.row);
   } catch (error) {
-    await env.QR_BUCKET.delete(objectKey);
     if (error instanceof Error && error.message.includes("UNIQUE")) {
       const raced = await env.DB.prepare(
         `SELECT * FROM detections
@@ -931,10 +888,52 @@ export async function listInbox(request: Request, env: Env): Promise<Response> {
   return json({ items });
 }
 
-async function parseAcceptInput(request: Request): Promise<AcceptInboxItemInput> {
-  const parsed = acceptInboxItemSchema.safeParse(await readJson(request));
+function parseAcceptValue(value: unknown): AcceptInboxItemInput {
+  const parsed = acceptInboxItemSchema.safeParse(value);
   if (!parsed.success) invalidSchema(parsed.error.issues);
   return parsed.data;
+}
+
+async function readAcceptRequest(request: Request): Promise<{
+  input: AcceptInboxItemInput;
+  image: File | null;
+}> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.toLocaleLowerCase().startsWith("application/json")) {
+    return { input: parseAcceptValue(await readJson(request)), image: null };
+  }
+  if (!contentType.toLocaleLowerCase().startsWith("multipart/form-data")) {
+    throw new HttpError(415, "unsupported_media_type", "Expected JSON or multipart form data");
+  }
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const byteLength = Number(contentLength);
+    if (!Number.isFinite(byteLength) || byteLength > MAX_MULTIPART_BYTES) {
+      throw new HttpError(413, "image_too_large", "QR image must not exceed 10 MiB");
+    }
+  }
+  try {
+    const form = await request.formData();
+    const rawInput = form.get("input");
+    let inputValue: unknown = {};
+    if (typeof rawInput === "string" && rawInput.length > 0) {
+      if (rawInput.length > 64 * 1024) {
+        throw new HttpError(413, "input_too_large", "Confirmation input is too large");
+      }
+      try {
+        inputValue = JSON.parse(rawInput);
+      } catch {
+        throw new HttpError(400, "invalid_input", "Confirmation input is not valid JSON");
+      }
+    }
+    return {
+      input: parseAcceptValue(inputValue),
+      image: parseImage(form.get("image")),
+    };
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(400, "invalid_upload", "Multipart body could not be parsed");
+  }
 }
 
 export async function acceptInboxItem(
@@ -943,12 +942,39 @@ export async function acceptInboxItem(
   detectionId: string,
 ): Promise<Response> {
   const auth = await authenticate(request, env);
-  const input = await parseAcceptInput(request);
   const row = await detectionById(env, auth.accountId, detectionId);
   if (!row) throw new HttpError(404, "detection_not_found", "Detection was not found");
   if (row.status === "committed") return responseForRow(env, row);
   if (row.status !== "needs_review") {
     throw new HttpError(409, "detection_not_reviewable", "Detection can no longer be accepted");
+  }
+  const { input, image } = await readAcceptRequest(request);
+  let uploadedObjectKey: string | null = null;
+  if (image) {
+    uploadedObjectKey = `accounts/${auth.accountId}/detections/${row.id}`;
+    const contentType = image.type.toLocaleLowerCase();
+    await env.QR_BUCKET.put(uploadedObjectKey, image, {
+      httpMetadata: {
+        contentType,
+        cacheControl: "public, max-age=31536000, immutable",
+      },
+      customMetadata: {
+        accountId: auth.accountId,
+        detectionId: row.id,
+        source: "confirmed-on-device",
+      },
+    });
+    row.pending_object_key = uploadedObjectKey;
+    row.pending_content_type = contentType;
+    row.pending_byte_size = image.size;
+  }
+  if (!row.pending_object_key || !row.pending_content_type || !row.pending_byte_size) {
+    if (uploadedObjectKey) await env.QR_BUCKET.delete(uploadedObjectKey);
+    throw new HttpError(
+      400,
+      "image_required",
+      "The original QR image is required when confirming this detection",
+    );
   }
 
   let result: DetectionCommitResult;
@@ -958,6 +984,7 @@ export async function acceptInboxItem(
   if (channelId) {
     const channel = await channelRowById(env, auth.accountId, channelId);
     if (!channel || channel.disabled_at) {
+      if (uploadedObjectKey) await env.QR_BUCKET.delete(uploadedObjectKey);
       throw new HttpError(404, "channel_not_found", "Channel was not found");
     }
     if (input.name !== undefined) row.detected_name = input.name;
@@ -978,14 +1005,19 @@ export async function acceptInboxItem(
         expiresAt: input.expiresAt !== undefined ? 1 : confidences.expiresAt,
       } satisfies FieldConfidences);
     }
-    result = await commitUpdate(
-      env,
-      row,
-      channel,
-      "accepted_update",
-      1,
-      "The user confirmed the target channel",
-    );
+    try {
+      result = await commitUpdate(
+        env,
+        row,
+        channel,
+        "accepted_update",
+        1,
+        "The user confirmed the target channel",
+      );
+    } catch (error) {
+      if (uploadedObjectKey) await env.QR_BUCKET.delete(uploadedObjectKey);
+      throw error;
+    }
   } else {
     const name = input.name ?? row.detected_name;
     const platform = input.platform ?? row.platform;
@@ -993,6 +1025,7 @@ export async function acceptInboxItem(
       ? input.expiresAt
       : row.detected_expires_at;
     if (!name || !platform) {
+      if (uploadedObjectKey) await env.QR_BUCKET.delete(uploadedObjectKey);
       throw new HttpError(
         400,
         "channel_identity_required",
@@ -1002,14 +1035,19 @@ export async function acceptInboxItem(
     row.detected_name = name;
     row.platform = platform;
     row.detected_expires_at = expiresAt;
-    result = await commitCreate(
-      env,
-      row,
-      { name, platform, expiresAt },
-      "accepted_create",
-      1,
-      "The user confirmed creation of a new channel",
-    );
+    try {
+      result = await commitCreate(
+        env,
+        row,
+        { name, platform, expiresAt },
+        "accepted_create",
+        1,
+        "The user confirmed creation of a new channel",
+      );
+    } catch (error) {
+      if (uploadedObjectKey) await env.QR_BUCKET.delete(uploadedObjectKey);
+      throw error;
+    }
   }
   if (result.deleteObjectKey) await env.QR_BUCKET.delete(result.deleteObjectKey);
   return responseForRow(env, result.row);

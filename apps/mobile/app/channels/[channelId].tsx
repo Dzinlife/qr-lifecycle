@@ -20,7 +20,16 @@ import {
   listQrVersions,
   updateChannelExpiry,
 } from "@/api/client";
-import { Button, Card, Loading, Notice, Screen, colors, textStyles } from "@/components/ui";
+import {
+  Button,
+  Card,
+  Loading,
+  NavigationDetailScreen,
+  Notice,
+  Screen,
+  colors,
+  textStyles,
+} from "@/components/ui";
 import { useApp } from "@/context/app-context";
 import { humanizeError } from "@/lib/pure";
 
@@ -151,7 +160,7 @@ export default function ChannelDetailScreen() {
   };
 
   return (
-    <Screen edges={[]}>
+    <NavigationDetailScreen>
       <View style={styles.header}>
         <Text style={textStyles.eyebrow}>{platformNames[channel.platform]}</Text>
         <Text style={textStyles.title}>{channel.name}</Text>
@@ -210,7 +219,7 @@ export default function ChannelDetailScreen() {
       {entryError ? <Notice tone="danger">{entryError}</Notice> : null}
 
       <Card>
-        <Text style={textStyles.heading}>自动更新</Text>
+        <Text style={textStyles.heading}>到期提醒</Text>
         <Text style={textStyles.muted}>
           不需要先选择这个频道。把新二维码保存到相册后回到“发现”，系统会自动识别并匹配。
         </Text>
@@ -255,7 +264,7 @@ export default function ChannelDetailScreen() {
           {saving ? "正在保存…" : "保存修正"}
         </Button>
       </Card>
-    </Screen>
+    </NavigationDetailScreen>
   );
 }
 

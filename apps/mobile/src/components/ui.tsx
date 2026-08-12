@@ -1,19 +1,28 @@
-import type { PropsWithChildren, ReactNode } from "react";
+import { useCallback, useRef, type PropsWithChildren, type ReactNode } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ScrollViewProps,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { SafeAreaView, type Edges } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+  type Edges,
+} from "react-native-safe-area-context";
 import { EdgeFadeView } from "react-native-edge-fade";
 import { ScrollViewMarker } from "react-native-screens/experimental";
+import { Stack } from "expo-router";
+import { BlurView } from "expo-blur";
 
 export const colors = {
   background: "#F5F4EF",
@@ -96,6 +105,59 @@ export function ProgressiveTopScrollView({
         {scrollView}
       </ScrollViewMarker>
     </EdgeFadeView>
+  );
+}
+
+export function NavigationDetailScreen({ children }: PropsWithChildren) {
+  const insets = useSafeAreaInsets();
+  const scrollDistance = useRef(new Animated.Value(0)).current;
+  const scrollOrigin = useRef<number | null>(null);
+  const headerInset = insets.top + 44;
+  const dividerOpacity = scrollDistance.interpolate({
+    inputRange: [0, 10],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offset = event.nativeEvent.contentOffset.y;
+    if (scrollOrigin.current === null) scrollOrigin.current = offset;
+    scrollDistance.setValue(Math.max(0, offset - scrollOrigin.current));
+  }, [scrollDistance]);
+
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          headerBackground: () => (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.navigationHeaderBackground, { opacity: dividerOpacity }]}
+            >
+              <BlurView
+                intensity={70}
+                style={styles.navigationBlur}
+                tint="systemThinMaterial"
+              />
+              <View style={styles.navigationDivider} />
+            </Animated.View>
+          ),
+        }}
+      />
+      <View style={styles.safeArea}>
+        <Animated.ScrollView
+          contentContainerStyle={styles.screen}
+          contentInset={{ top: headerInset }}
+          contentInsetAdjustmentBehavior="never"
+          contentOffset={{ x: 0, y: -headerInset }}
+          keyboardShouldPersistTaps="handled"
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          scrollIndicatorInsets={{ bottom: insets.bottom }}
+        >
+          {children}
+        </Animated.ScrollView>
+      </View>
+    </>
   );
 }
 
@@ -189,6 +251,22 @@ export const textStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   screen: { flexGrow: 1, gap: 16, padding: 20, paddingBottom: 40 },
+  navigationDivider: {
+    backgroundColor: "rgba(23, 33, 28, 0.18)",
+    bottom: 0,
+    height: StyleSheet.hairlineWidth,
+    left: 0,
+    position: "absolute",
+    right: 0,
+  },
+  navigationHeaderBackground: { flex: 1 },
+  navigationBlur: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

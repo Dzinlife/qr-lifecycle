@@ -121,7 +121,7 @@ export function ChannelDetailPage() {
 
         <article className="current-qr-card">
           <div className="card-heading">
-            <div><p className="eyebrow">自动更新</p><h2>当前原生群码</h2></div>
+            <div><p className="eyebrow">当前版本</p><h2>当前原生群码</h2></div>
             <span className={`status-badge status-badge--${status.tone}`}><i />{status.label}</span>
           </div>
           <div className={`qr-preview${channel.activeQrVersionId ? "" : " qr-preview--empty"}`}>
@@ -131,7 +131,7 @@ export function ChannelDetailPage() {
                 alt={`${channel.name} 当前二维码`}
               />
             ) : (
-              <><QrCode size={54} /><strong>还没有二维码</strong><span>打开手机 App 保存群码，系统会自动创建当前版本</span></>
+              <><QrCode size={54} /><strong>还没有二维码</strong><span>打开手机 App 保存群码，并在检测结果中确认创建当前版本</span></>
             )}
           </div>
           <dl className="detail-list">
