@@ -59,6 +59,7 @@ export function Screen({
   return (
     <SafeAreaView edges={edges} style={styles.safeArea}>
       <ScrollView
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
         contentContainerStyle={styles.screen}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
@@ -76,6 +77,7 @@ export function ProgressiveTopScrollView({
 }: ScrollViewProps) {
   const scrollView = (
     <ScrollView
+      automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       keyboardShouldPersistTaps="handled"
@@ -149,6 +151,7 @@ export function NavigationDetailScreen({ children }: PropsWithChildren) {
       />
       <View style={styles.safeArea}>
         <Animated.ScrollView
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           contentContainerStyle={styles.screen}
           contentInset={{ top: headerInset }}
           contentInsetAdjustmentBehavior="never"
