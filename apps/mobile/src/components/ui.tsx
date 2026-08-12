@@ -60,6 +60,7 @@ export function Screen({
     <SafeAreaView edges={edges} style={styles.safeArea}>
       <ScrollView
         contentContainerStyle={styles.screen}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
       >
@@ -76,6 +77,8 @@ export function ProgressiveTopScrollView({
   const scrollView = (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      keyboardShouldPersistTaps="handled"
       style={style}
       {...props}
     />
@@ -111,7 +114,6 @@ export function ProgressiveTopScrollView({
 export function NavigationDetailScreen({ children }: PropsWithChildren) {
   const insets = useSafeAreaInsets();
   const scrollDistance = useRef(new Animated.Value(0)).current;
-  const scrollOrigin = useRef<number | null>(null);
   const headerInset = insets.top + 44;
   const dividerOpacity = scrollDistance.interpolate({
     inputRange: [0, 10],
@@ -119,9 +121,11 @@ export function NavigationDetailScreen({ children }: PropsWithChildren) {
     extrapolate: "clamp",
   });
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offset = event.nativeEvent.contentOffset.y;
-    if (scrollOrigin.current === null) scrollOrigin.current = offset;
-    scrollDistance.setValue(Math.max(0, offset - scrollOrigin.current));
+    const { contentInset, contentOffset } = event.nativeEvent;
+    // UIScrollView's true top is always -contentInset.top. Deriving from the
+    // first scroll event is incorrect because that event may already be inside
+    // the elastic overscroll region, leaving the divider visible at rest.
+    scrollDistance.setValue(Math.max(0, contentOffset.y + contentInset.top));
   }, [scrollDistance]);
 
   return (
@@ -149,6 +153,7 @@ export function NavigationDetailScreen({ children }: PropsWithChildren) {
           contentInset={{ top: headerInset }}
           contentInsetAdjustmentBehavior="never"
           contentOffset={{ x: 0, y: -headerInset }}
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           keyboardShouldPersistTaps="handled"
           onScroll={handleScroll}
           scrollEventThrottle={16}

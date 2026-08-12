@@ -243,16 +243,20 @@ function InboxCard({
         </Pressable>
       </View>
       <Modal
-        animationType="fade"
+        allowSwipeDismissal
+        animationType="slide"
+        onDismiss={() => setPreviewOpen(false)}
         onRequestClose={() => setPreviewOpen(false)}
-        presentationStyle="fullScreen"
+        presentationStyle="pageSheet"
         visible={previewOpen}
       >
         <SafeAreaView style={styles.previewScreen}>
+          <View style={styles.previewHandle} />
           <View style={styles.previewHeader}>
             <Text style={styles.previewTitle}>检测原图</Text>
             <Pressable
               accessibilityRole="button"
+              hitSlop={12}
               onPress={() => setPreviewOpen(false)}
               style={styles.previewClose}
             >
@@ -931,6 +935,14 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   previewScreen: { backgroundColor: "#090B0A", flex: 1 },
+  previewHandle: {
+    alignSelf: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.34)",
+    borderRadius: 999,
+    height: 5,
+    marginTop: 8,
+    width: 42,
+  },
   previewHeader: {
     alignItems: "center",
     flexDirection: "row",
