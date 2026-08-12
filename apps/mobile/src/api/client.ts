@@ -10,6 +10,8 @@ import type {
   QrVersion,
   UndoDetectionResponse,
 } from "@qr-lifecycle/contracts";
+import { fetch as expoFetch } from "expo/fetch";
+import { File } from "expo-file-system";
 
 import { normalizeApiOrigin, parsePairPayload, type PairPayload } from "@/lib/pure";
 import type { MobileSession } from "@/session/storage";
@@ -58,7 +60,7 @@ async function request<T>(
   headers.set("Accept", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(url(origin, path), { ...init, headers });
+  const response = await expoFetch(url(origin, path), { ...init, headers });
   if (!response.ok) throw await readError(response);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -105,14 +107,8 @@ export async function listQrVersions(
   return Array.isArray(raw) ? raw : raw.qrVersions;
 }
 
-function imageFile(candidate: QrCandidate): { uri: string; name: string; type: string } {
-  const path = candidate.imageUri.toLowerCase();
-  const type = path.endsWith(".png")
-    ? "image/png"
-    : path.endsWith(".heic") || path.endsWith(".heif")
-      ? "image/heic"
-      : "image/jpeg";
-  return { uri: candidate.imageUri, name: `group-qr.${type.split("/")[1]}`, type };
+function imageFile(candidate: QrCandidate): File {
+  return new File(candidate.imageUri);
 }
 
 export async function uploadQrCandidate(
@@ -121,7 +117,7 @@ export async function uploadQrCandidate(
   candidate: QrCandidate,
 ): Promise<QrVersion> {
   const form = new FormData();
-  form.append("image", imageFile(candidate) as unknown as Blob);
+  form.append("image", imageFile(candidate));
   form.append("decodedPayload", candidate.payload);
   if (candidate.assetId) form.append("sourceAssetId", candidate.assetId);
   if (candidate.creationTime !== null) {
@@ -144,7 +140,7 @@ export async function commitDetection(
 ): Promise<CommitDetectionResponse> {
   const form = new FormData();
   form.append("metadata", JSON.stringify(detection));
-  form.append("image", imageFile(candidate) as unknown as Blob);
+  form.append("image", imageFile(candidate));
 
   return request<CommitDetectionResponse>(
     session.deployment.apiOrigin,
