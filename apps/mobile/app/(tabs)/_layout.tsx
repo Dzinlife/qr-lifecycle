@@ -18,7 +18,7 @@ export default function TabLayout() {
         default: { color: defaultIconColor, fontSize: 11 },
         selected: { color: selectedColor, fontSize: 11, fontWeight: "600" },
       }}
-      minimizeBehavior="onScrollDown"
+      minimizeBehavior="never"
       tintColor={selectedColor}
     >
       <NativeTabs.Trigger
